@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { MousePointer2, Plus, Search, Settings, Trash2 } from "lucide-react";
+import { MousePointer2, Search, Settings, Trash2 } from "lucide-react";
 
 function MemoIcon({ size = 10 }) {
   return (
@@ -33,6 +33,18 @@ const DEFAULT_UPDATE_INFO_URL = "https://raw.githubusercontent.com/tea90g/xl-cal
 const pad = (n) => String(n).padStart(2, "0");
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const makeDate = (y, m, d) => `${y}-${pad(m)}-${pad(d)}`;
+const addDays = (dateKey, amount) => {
+  const d = new Date(`${dateKey}T00:00:00`);
+  d.setDate(d.getDate() + amount);
+  return makeDate(d.getFullYear(), d.getMonth() + 1, d.getDate());
+};
+const addMonthsSafe = (dateKey, amount) => {
+  const base = new Date(`${dateKey}T00:00:00`);
+  const d = new Date(base);
+  d.setMonth(base.getMonth() + amount);
+  if (d.getDate() !== base.getDate()) return null;
+  return makeDate(d.getFullYear(), d.getMonth() + 1, d.getDate());
+};
 const cx = (...v) => v.filter(Boolean).join(" ");
 
 declare global {
@@ -244,19 +256,20 @@ function fmtTime(sec) {  const safe = Math.max(0, Math.floor(sec || 0));
 
 function repeatCopies(event, year, month) {
   if (!event.repeatRule || event.repeatRule === "none") return [];
-  const base = new Date(`${event.date}T00:00:00`);
   const excluded = Array.isArray(event.excludedDates) ? event.excludedDates : [];
+  const untilKey = event.repeatUntil || "";
   const list = [];
   for (let i = 1; i <= 36; i += 1) {
-    const d = new Date(base);
-    if (event.repeatRule === "weekly") d.setDate(base.getDate() + i * 7);
-    if (event.repeatRule === "monthly") {
-      d.setMonth(base.getMonth() + i);
-      if (d.getDate() !== base.getDate()) continue;
-    }
-    const key = makeDate(d.getFullYear(), d.getMonth() + 1, d.getDate());
+    let key = null;
+    if (event.repeatRule === "weekly") key = addDays(event.date, i * 7);
+    if (event.repeatRule === "monthly") key = addMonthsSafe(event.date, i);
+    if (!key) continue;
+    if (untilKey && key > untilKey) break;
     if (excluded.includes(key)) continue;
-    if (d.getFullYear() === year && d.getMonth() + 1 === month) list.push({ ...event, id: `gen-${event.id}-${key}`, baseEventId: event.id, baseRepeatId: event.baseRepeatId || event.id, date: key, isGenerated: true });
+    const d = new Date(`${key}T00:00:00`);
+    if (d.getFullYear() === year && d.getMonth() + 1 === month) {
+      list.push({ ...event, id: `gen-${event.id}-${key}`, baseEventId: event.id, baseRepeatId: event.baseRepeatId || event.id, date: key, isGenerated: true });
+    }
   }
   return list;
 }
@@ -285,7 +298,7 @@ export default function App() {
   const [state, setState] = useState(readState);
   const [selectedDate, setSelectedDate] = useState(null);
   const [editingEvent, setEditingEvent] = useState(null);
-  const [draft, setDraft] = useState({ title: "", startTime: "", categoryId: "etc", memo: "", url: "", repeatRule: "none" });
+  const [draft, setDraft] = useState({ title: "", startTime: "", categoryId: "etc", memo: "", url: "", repeatRule: "none", repeatUntil: "", rangeStart: "", rangeEnd: "" });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileDriveSettingsOpen, setMobileDriveSettingsOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
@@ -293,7 +306,9 @@ export default function App() {
   const [categoryDrafts, setCategoryDrafts] = useState([]);
   const [imageOpen, setImageOpen] = useState(false);
   const [todoAddTarget, setTodoAddTarget] = useState(null);
+  const [editingTodo, setEditingTodo] = useState(null);
   const [todoDraft, setTodoDraft] = useState({ text: "", day: 1 });
+  const [todoDrafts, setTodoDrafts] = useState([]);
   const [historyStack, setHistoryStack] = useState([]);
   const [dragging, setDragging] = useState(null);
   const [hoverDate, setHoverDate] = useState(null);
@@ -692,9 +707,27 @@ ${info.message}` : "";
 
   const generatedEvents = useMemo(() => state.events.flatMap((ev) => repeatCopies(ev, state.year, state.month)), [state.events, state.year, state.month]);
   const routineEvents = useMemo(() => {
-    const lastDay = new Date(state.year, state.month, 0).getDate();
-    return state.todos.filter((t) => t.fixed && t.day).map((t) => ({ id: `routine-${t.id}-${routineMonthKey}`, date: makeDate(state.year, state.month, Math.min(Number(t.day) || 1, lastDay)), title: t.text, categoryId: "routine", isRoutine: true, done: Boolean(state.routineDoneByMonth?.[routineMonthKey]?.[t.id]), routineTodoId: t.id }));
-  }, [state.todos, state.year, state.month, state.routineDoneByMonth, routineMonthKey]);
+    const visibleMonths = Array.from(
+      new Map(days.map((d) => [`${d.year}-${pad(d.month)}`, { year: d.year, month: d.month }])).values()
+    );
+
+    return visibleMonths.flatMap(({ year, month }) => {
+      const monthKey = `${year}-${pad(month)}`;
+      const lastDay = new Date(year, month, 0).getDate();
+
+      return state.todos
+        .filter((t) => t.fixed && t.day)
+        .map((t) => ({
+          id: `routine-${t.id}-${monthKey}`,
+          date: makeDate(year, month, Math.min(Number(t.day) || 1, lastDay)),
+          title: t.text,
+          categoryId: "routine",
+          isRoutine: true,
+          done: Boolean(state.routineDoneByMonth?.[monthKey]?.[t.id]),
+          routineTodoId: t.id,
+        }));
+    });
+  }, [state.todos, state.routineDoneByMonth, days]);
   const holidayEvents = useMemo(() => {
     const kr = (KR_HOLIDAYS[state.year] || []).map(([date, title]) => ({ id: `kr-${date}`, date, title, categoryId: "kr-holiday", isHoliday: true }));
     const jp = state.showJapanHolidays ? (JP_HOLIDAYS[state.year] || []).map(([date, title]) => ({ id: `jp-${date}`, date, title, categoryId: "holiday", isHoliday: true })) : [];
@@ -740,13 +773,13 @@ ${info.message}` : "";
   function openNew(date) {
     setSelectedDate(date);
     setEditingEvent(null);
-    setDraft({ title: "", startTime: "", categoryId: state.categories[0]?.id || "etc", memo: "", url: "", repeatRule: "none" });
+    setDraft({ title: "", startTime: "", categoryId: state.categories[0]?.id || "etc", memo: "", url: "", repeatRule: "none", repeatUntil: "", rangeStart: date, rangeEnd: "" });
   }
   function openEdit(ev) {
     if (ev.isRoutine || ev.isHoliday) return;
     setSelectedDate(ev.date);
     setEditingEvent(ev.id);
-    setDraft({ title: ev.title || "", startTime: ev.startTime || "", categoryId: ev.categoryId || "etc", memo: ev.memo || "", url: ev.url || "", repeatRule: ev.repeatRule || "none" });
+    setDraft({ title: ev.title || "", startTime: ev.startTime || "", categoryId: ev.categoryId || "etc", memo: ev.memo || "", url: ev.url || "", repeatRule: ev.repeatRule || "none", repeatUntil: ev.repeatUntil || "", rangeStart: ev.date || "", rangeEnd: "" });
   }
   function getRepeatRootId(target) {
     if (!target) return null;
@@ -756,18 +789,63 @@ ${info.message}` : "";
     if (!rootId) return false;
     return event.id === rootId || event.baseRepeatId === rootId || event.repeatGroupId === rootId || event.cloneGroupId === rootId || event.baseEventId === rootId;
   }
+  function buildRangeEvents(baseDate, baseDraft) {
+    const startKey = baseDraft.rangeStart || baseDate;
+    const endKey = baseDraft.rangeEnd || "";
+    if (!startKey || !endKey || endKey < startKey) return null;
+
+    const groupId = `range-${uid()}`;
+    const dates = [];
+    let current = startKey;
+    for (let guard = 0; guard < 370 && current && current <= endKey; guard += 1) {
+      dates.push(current);
+      current = addDays(current, 1);
+    }
+
+    if (!dates.length) return null;
+
+    return dates.map((date, index) => ({
+      id: uid(),
+      date,
+      sortOrder: (byDate.get(date)?.length || 0) + index,
+      title: baseDraft.title.trim(),
+      startTime: baseDraft.startTime || "",
+      categoryId: baseDraft.categoryId || "etc",
+      memo: baseDraft.memo || "",
+      url: baseDraft.url || "",
+      repeatRule: "none",
+      repeatGroupId: groupId,
+    }));
+  }
+
   function saveEvent() {
     if (!selectedDate || !draft.title.trim()) return;
     pushHistory();
+
+    const cleanDraft = {
+      title: draft.title.trim(),
+      startTime: draft.startTime || "",
+      categoryId: draft.categoryId || "etc",
+      memo: draft.memo || "",
+      url: draft.url || "",
+      repeatRule: draft.repeatRule || "none",
+      repeatUntil: draft.repeatUntil || "",
+    };
+
     if (editingEvent) {
       const target = allEvents.find((e) => e.id === editingEvent);
       if (target?.isGenerated && target.baseEventId) {
-        setState((s) => ({ ...s, events: [...s.events.map((e) => e.id === target.baseEventId ? { ...e, excludedDates: [...new Set([...(e.excludedDates || []), target.date])] } : e), { id: uid(), date: target.date, sortOrder: target.sortOrder || 0, ...draft, title: draft.title.trim(), repeatRule: "none" }] }));
+        setState((s) => ({ ...s, events: [...s.events.map((e) => e.id === target.baseEventId ? { ...e, excludedDates: [...new Set([...(e.excludedDates || []), target.date])] } : e), { id: uid(), date: target.date, sortOrder: target.sortOrder || 0, ...cleanDraft, repeatRule: "none", repeatUntil: "" }] }));
       } else {
-        setState((s) => ({ ...s, events: s.events.map((e) => e.id === editingEvent ? { ...e, ...draft, title: draft.title.trim() } : e) }));
+        setState((s) => ({ ...s, events: s.events.map((e) => e.id === editingEvent ? { ...e, ...cleanDraft } : e) }));
       }
     } else {
-      setState((s) => ({ ...s, events: [...s.events, { id: uid(), date: selectedDate, sortOrder: (byDate.get(selectedDate)?.length || 0), baseRepeatId: draft.repeatRule !== "none" ? `repeat-${uid()}` : undefined, ...draft, title: draft.title.trim() }] }));
+      const rangedEvents = draft.rangeMode ? buildRangeEvents(selectedDate, draft) : null;
+      if (rangedEvents) {
+        setState((s) => ({ ...s, events: [...s.events, ...rangedEvents] }));
+      } else {
+        setState((s) => ({ ...s, events: [...s.events, { id: uid(), date: selectedDate, sortOrder: (byDate.get(selectedDate)?.length || 0), baseRepeatId: cleanDraft.repeatRule !== "none" ? `repeat-${uid()}` : undefined, ...cleanDraft }] }));
+      }
     }
     setSelectedDate(null); setEditingEvent(null);
   }
@@ -792,6 +870,7 @@ ${info.message}` : "";
       repeatGroupId: undefined,
       excludedDates: undefined,
       repeatRule: "none",
+      repeatUntil: "",
       sortOrder: (byDate.get(ev.date)?.length || 0) + 1,
       title: `${ev.title}`,
     };
@@ -805,7 +884,7 @@ ${info.message}` : "";
     setState((s) => ({
       ...s,
       events: s.events.map((e) => isSameRepeatRoot(e, repeatId)
-        ? { ...e, ...draft, title: draft.title.trim(), baseRepeatId: e.baseRepeatId || repeatId }
+        ? { ...e, title: draft.title.trim(), startTime: draft.startTime || "", categoryId: draft.categoryId || "etc", memo: draft.memo || "", url: draft.url || "", repeatRule: draft.repeatRule || "none", repeatUntil: draft.repeatUntil || "", baseRepeatId: e.baseRepeatId || repeatId }
         : e),
     }));
     setSelectedDate(null);
@@ -854,16 +933,56 @@ ${info.message}` : "";
     reader.readAsDataURL(file);
   }
   function openTodoAdd(fixed) {
-    setTodoAddTarget(fixed ? "fixed" : "today");
+    const isFixed = Boolean(fixed);
+    setEditingTodo(null);
+    setTodoAddTarget(isFixed ? "fixed" : "today");
+    setTodoDrafts(
+      state.todos
+        .filter((todo) => Boolean(todo.fixed) === isFixed)
+        .map((todo) => ({ ...todo }))
+    );
     setTodoDraft({ text: "", day: new Date(state.year, state.month - 1, 1).getDate() });
   }
-  function saveTodo() {
-    const text = todoDraft.text.trim();
-    if (!todoAddTarget || !text) return;
-    const fixed = todoAddTarget === "fixed";
-    const day = fixed ? Math.max(1, Math.min(31, Number(todoDraft.day) || 1)) : undefined;
-    setState((s) => ({ ...s, todos: [...s.todos, { id: uid(), text, done: false, fixed, day }] }));
+  function openTodoEdit(todo) {
+    if (!todo) return;
+    openTodoAdd(Boolean(todo.fixed));
+  }
+  function closeTodoModal() {
     setTodoAddTarget(null);
+    setEditingTodo(null);
+    setTodoDraft({ text: "", day: 1 });
+    setTodoDrafts([]);
+  }
+  function saveTodoManager() {
+    if (!todoAddTarget) return;
+    const fixed = todoAddTarget === "fixed";
+    const cleaned = todoDrafts
+      .map((todo, index) => ({
+        ...todo,
+        id: todo.id || uid(),
+        text: String(todo.text || "").trim(),
+        fixed,
+        day: fixed ? Math.max(1, Math.min(31, Number(todo.day) || 1)) : undefined,
+        done: Boolean(todo.done),
+        sortOrder: index,
+      }))
+      .filter((todo) => todo.text);
+
+    setState((s) => ({
+      ...s,
+      todos: [
+        ...s.todos.filter((todo) => Boolean(todo.fixed) !== fixed),
+        ...cleaned,
+      ],
+      routineDoneByMonth: fixed
+        ? Object.fromEntries(Object.entries(s.routineDoneByMonth || {}).map(([monthKey, doneMap]) => {
+            const validIds = new Set(cleaned.map((todo) => todo.id));
+            const next = Object.fromEntries(Object.entries(doneMap || {}).filter(([todoId]) => validIds.has(todoId)));
+            return [monthKey, next];
+          }))
+        : s.routineDoneByMonth,
+    }));
+    closeTodoModal();
   }
   function toggleTodo(todo) {
     if (todo.fixed) {
@@ -993,8 +1112,8 @@ ${info.message}` : "";
             <button onClick={() => setImageOpen(true)} className="absolute right-[9px] top-[9px] flex h-[34px] w-[34px] items-center justify-center rounded-full bg-white/85 opacity-0 shadow-[0_8px_17px_rgba(0,0,0,0.12)] transition-opacity duration-150 hover:opacity-100 group-hover:opacity-100"><MousePointer2 size={12} fill="#111" /></button>
             <input ref={imageRef} type="file" accept="image/*" className="hidden" onChange={(e) => { loadImage(e.target.files?.[0], state.selectedImageSlot); e.currentTarget.value = ""; }} />
           </div>
-          {state.showFixedList && <Section title="MY LIST · 고정" onAdd={() => openTodoAdd(true)}>{state.todos.filter((t) => t.fixed).map((t) => <Todo key={t.id} todo={t} routineMonthKey={routineMonthKey} routineDoneByMonth={state.routineDoneByMonth} onToggle={toggleTodo} onDelete={deleteTodo} />)}</Section>}
-          {state.showTodayList && <Section title="MY LIST · 오늘" onAdd={() => openTodoAdd(false)}>{state.todos.filter((t) => !t.fixed).length ? state.todos.filter((t) => !t.fixed).map((t) => <Todo key={t.id} todo={t} onToggle={toggleTodo} onDelete={deleteTodo} />) : <div className="mt-[18px] px-[6px] text-center text-[11px] leading-[1.3] tracking-[-0.01em] text-[#b1b1b1]">오늘 할 일을 메모해 보세요.</div>}</Section>}
+          {state.showFixedList && <Section title="MY LIST · 고정" onAdd={() => openTodoAdd(true)}>{state.todos.filter((t) => t.fixed).map((t) => <Todo key={t.id} todo={t} routineMonthKey={routineMonthKey} routineDoneByMonth={state.routineDoneByMonth} onToggle={toggleTodo} onEdit={openTodoEdit} />)}</Section>}
+          {state.showTodayList && <Section title="MY LIST · 오늘" onAdd={() => openTodoAdd(false)}>{state.todos.filter((t) => !t.fixed).length ? state.todos.filter((t) => !t.fixed).map((t) => <Todo key={t.id} todo={t} onToggle={toggleTodo} onEdit={openTodoEdit} />) : <div className="mt-[18px] px-[6px] text-center text-[11px] leading-[1.3] tracking-[-0.01em] text-[#b1b1b1]">오늘 할 일을 메모해 보세요.</div>}</Section>}
           <Section title="CATEGORY" noTop onAdd={openCategoryEditor}><div className="mt-[19px] space-y-[12px]">{state.categories.map((c) => <div key={c.id} className="flex w-full items-center justify-between text-[14px] font-[600] tracking-[0em]"><span className="flex items-center gap-[12px]"><span className="h-[16px] w-[16px] rounded-full" style={{ background: c.color }} />{c.label}</span><span className="text-[11px] font-semibold tracking-[-0.018em] text-[#aaa19c]">{scheduleEvents.filter((e) => e.categoryId === c.id && e.date.startsWith(`${state.year}-${pad(state.month)}`)).length}</span></div>)}</div></Section>
         </aside>
 
@@ -1004,7 +1123,7 @@ ${info.message}` : "";
             <div className="flex items-center gap-2 pr-[10px]" style={{ WebkitAppRegion: "no-drag" }}><button onClick={() => setGuideOpen(true)} className="rounded-full border border-[#e6e6e6] bg-white px-[12px] py-[5px] text-[11px] font-[600] tracking-[0.02em] text-[#777] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition hover:bg-[#f7f7f7]">GUIDE</button><button onClick={() => setSettingsOpen(true)} className="flex items-center gap-[5px] rounded-full border border-[#e6e6e6] bg-white px-[12px] py-[5px] text-[11px] font-[600] tracking-[-0.01em] text-[#777] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition hover:bg-[#f7f7f7]"><Settings size={13} />설정</button><WindowControls /></div>
           </div>
           <div className="mx-auto flex min-h-0 flex-1 flex-col w-full max-w-none"><div className="grid h-[28px] grid-cols-7 items-center text-center text-[14px] font-[600] tracking-[0em] text-[#555555]"><span className="text-[#FF8DA1]">일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span className="text-[#7EA6FF]">토</span></div>
-            <div className="grid flex-1 auto-rows-fr grid-cols-7 overflow-hidden rounded-[8px] border border-[#ececec] bg-[#fcfcfc] min-h-0">{days.map((d) => <DayCell key={d.key} d={d} events={d.current ? byDate.get(d.key) || [] : []} holidayMeta={holidayMeta.get(d.key)} cat={cat} hoverDate={hoverDate} todayKey={todayKey} dragging={dragging} setDragging={setDragging} setHoverDate={setHoverDate} setCopyMode={setCopyMode} copyMode={copyMode} openNew={openNew} openEdit={openEdit} moveEvent={moveEvent} setState={setState} routineMonthKey={routineMonthKey} />)}</div>
+            <div className="grid flex-1 auto-rows-fr grid-cols-7 overflow-hidden rounded-[8px] border border-[#ececec] bg-[#fcfcfc] min-h-0">{days.map((d) => <DayCell key={d.key} d={d} events={byDate.get(d.key) || []} holidayMeta={holidayMeta.get(d.key)} cat={cat} hoverDate={hoverDate} todayKey={todayKey} dragging={dragging} setDragging={setDragging} setHoverDate={setHoverDate} setCopyMode={setCopyMode} copyMode={copyMode} openNew={openNew} openEdit={openEdit} moveEvent={moveEvent} setState={setState} routineMonthKey={routineMonthKey} />)}</div>
           </div>
           <MonthTabs state={state} setState={setState} jumpMonth={jumpMonth} />
           {state.showTimerBar && <TimerBar state={state} setState={setState} focusRatio={focusRatio} />}
@@ -1129,7 +1248,7 @@ ${info.message}` : "";
         </div>
       )}
 
-      {todoAddTarget && <TodoAddModal target={todoAddTarget} draft={todoDraft} setDraft={setTodoDraft} onSave={saveTodo} onClose={() => setTodoAddTarget(null)} />}
+      {todoAddTarget && <TodoManageModal target={todoAddTarget} drafts={todoDrafts} setDrafts={setTodoDrafts} onSave={saveTodoManager} onClose={closeTodoModal} />}
     </div>
   );
 }
@@ -1267,11 +1386,18 @@ function MobileCalendar({
           const key = d.key;
           const events = byDate.get(key) || [];
           const meta = holidayMeta.get(key);
+          const holidayTitle = meta
+            ? [
+                ...(meta.kr || []).map((name) => `🇰🇷 ${name}`),
+                ...(meta.jp || []).map((name) => `🇯🇵 ${name}`),
+              ].join("\n")
+            : "";
           const isActive = key === activeDate;
 
           return (
             <button
               key={key}
+             
               onClick={() => { setActiveDate(key); if (pendingAction) applyPendingAction(key); }}
               className={cx(
                 "min-h-[74px] border-b border-r border-[#efefef] bg-white p-[5px] text-left last:border-r-0",
@@ -1383,21 +1509,34 @@ function MobileCalendar({
 
 
 function DayCell({ d, events, holidayMeta, cat, hoverDate, todayKey, dragging, setDragging, setHoverDate, setCopyMode, copyMode, openNew, openEdit, moveEvent, setState, routineMonthKey }) {
+  const holidayTitle = holidayMeta
+    ? [
+        ...(holidayMeta.kr || []).map((name) => `🇰🇷 ${name}`),
+        ...(holidayMeta.jp || []).map((name) => `🇯🇵 ${name}`),
+      ].join("\n")
+    : "";
+
   return <div data-date={d.key} onDragOver={(e) => { e.preventDefault(); setHoverDate(d.key); }} onDrop={(e) => { e.preventDefault(); const raw = e.dataTransfer.getData("text/plain"); if (raw) moveEvent(JSON.parse(raw), d.key, copyMode); setDragging(null); setHoverDate(null); setCopyMode(false); }} onDoubleClick={() => openNew(d.key)} className={cx("relative h-full min-h-[clamp(102px,12vh,160px)] border-b border-r border-[#efefef] bg-[#fdfdfd] px-[clamp(8px,0.9vw,13px)] py-[clamp(8px,1vh,13px)] [&:nth-child(7n)]:border-r-0", hoverDate === d.key && "ring-2 ring-[#d8eeee] ring-inset", todayKey === d.key && d.current && "before:absolute before:inset-0 before:bg-[#dcdcdc]/30 before:pointer-events-none ring-1 ring-[#dfe5e8] ring-inset")}>
-    <div className="mb-[2px] flex items-start justify-between gap-1">
+    {!d.current && <span className="pointer-events-none absolute inset-0 z-0 bg-[#f1f1f1]/75" />}
+    <div className="relative z-[1] mb-[2px] flex items-start justify-between gap-1">
       <button onClick={() => openNew(d.key)} className={`text-[14px] font-[600] tracking-[0em] ${!d.current ? "text-[#c9cfd3]" : holidayMeta?.kr?.length ? "text-[#ff8da1]" : holidayMeta?.jp?.length ? "text-[#7EA6FF]" : d.dow === 0 ? "text-[#FF8DA1]" : d.dow === 6 ? "text-[#7EA6FF]" : "text-[#555555]"}`}>{d.day}</button>
       {holidayMeta && d.current && (
-        <div className="flex max-w-[104px] shrink-0 flex-wrap justify-end gap-[2px] pt-[1px]">
+        <div className="group/holiday relative flex max-w-[104px] shrink-0 flex-wrap justify-end gap-[2px] pt-[1px]">
           {holidayMeta.kr.length > 0 && <span className="rounded-full bg-[#fff1f4] px-[5px] py-[2px] text-[10px] font-black leading-none text-[#c796a5]">🇰🇷 공휴일</span>}
           {holidayMeta.jp.length > 0 && <span className="rounded-full bg-[#f1f6ff] px-[5px] py-[2px] text-[10px] font-black leading-none text-[#7EA6FF]">🇯🇵 祝日</span>}
+          {holidayTitle && (
+            <span className="pointer-events-none absolute right-0 top-[22px] z-[9999] hidden w-max max-w-[220px] whitespace-pre-line rounded-[8px] border border-[#e6e0da] bg-white px-3 py-2 text-left text-[11px] font-[600] leading-[1.45] text-[#544b44] shadow-[0_8px_20px_rgba(52,40,34,0.16)] group-hover/holiday:inline-block">
+              {holidayTitle}
+            </span>
+          )}
         </div>
       )}
     </div>
-    <div className="mt-[8px] flex flex-col gap-0 pb-[18px]">{events.slice(0, 5).map((ev, index) => ev.isRoutine ? <RoutineCard key={ev.id} ev={ev} setState={setState} routineMonthKey={routineMonthKey} /> : <EventCard key={ev.id} ev={ev} index={index} cat={cat(ev.categoryId)} dragging={dragging?.id === ev.id} onEdit={() => openEdit(ev)} onDragStart={(e) => { if (ev.isHoliday) return e.preventDefault(); setDragging(ev); setCopyMode(e.altKey || e.ctrlKey || e.metaKey); e.dataTransfer.setData("text/plain", JSON.stringify(ev)); }} onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); const raw = e.dataTransfer.getData("text/plain"); if (raw) moveEvent(JSON.parse(raw), d.key, copyMode, ev.id); setDragging(null); setHoverDate(null); setCopyMode(false); }} onDragEnd={() => { setDragging(null); setHoverDate(null); setCopyMode(false); }} />)}{events.length > 5 && <button className="mt-[2px] text-[8px] font-bold text-[#aaa]" onClick={() => alert(events.map((e) => e.title).join("\n"))}>+{events.length - 5}</button>}</div>
+    <div className="relative z-[1] mt-[8px] flex flex-col gap-0 pb-[18px]">{events.slice(0, 5).map((ev, index) => ev.isRoutine ? <RoutineCard key={ev.id} ev={ev} setState={setState} routineMonthKey={routineMonthKey} dim={!d.current} /> : <EventCard key={ev.id} ev={ev} index={index} dim={!d.current} cat={cat(ev.categoryId)} dragging={dragging?.id === ev.id} onEdit={() => openEdit(ev)} onDragStart={(e) => { if (ev.isHoliday) return e.preventDefault(); setDragging(ev); setCopyMode(e.altKey || e.ctrlKey || e.metaKey); e.dataTransfer.setData("text/plain", JSON.stringify(ev)); }} onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); const raw = e.dataTransfer.getData("text/plain"); if (raw) moveEvent(JSON.parse(raw), d.key, copyMode, ev.id); setDragging(null); setHoverDate(null); setCopyMode(false); }} onDragEnd={() => { setDragging(null); setHoverDate(null); setCopyMode(false); }} />)}{events.length > 5 && <button className="mt-[2px] text-[8px] font-bold text-[#aaa]" onClick={() => alert(events.map((e) => e.title).join("\n"))}>+{events.length - 5}</button>}</div>
   </div>;
 }
 
-function EventCard({ ev, cat, dragging, onEdit, onDragStart, onDragOver, onDrop, onDragEnd, index = 0 }) {
+function EventCard({ ev, cat, dragging, onEdit, onDragStart, onDragOver, onDrop, onDragEnd, index = 0, dim = false }) {
   const holiday = ev.isHoliday;
   const lines = String(ev.title || "").split("\n");
   const hasTimeBadge = ev.startTime && lines.length <= 1;
@@ -1422,7 +1561,7 @@ function EventCard({ ev, cat, dragging, onEdit, onDragStart, onDragOver, onDrop,
       )}
       style={{
         backgroundColor: cat.color,
-        opacity: 1,
+        opacity: dim ? 0.42 : 1,
         boxShadow:
           "0 -1px 2px rgba(54,42,34,0.04), 0 4px 8px rgba(82,68,58,0.06), 0 10px 18px rgba(82,68,58,0.04), inset 0 1px 0 rgba(255,255,255,0.42)",
         filter: "none",
@@ -1470,7 +1609,7 @@ function EventCard({ ev, cat, dragging, onEdit, onDragStart, onDragOver, onDrop,
               onClick={(e) => e.stopPropagation()}
             >
               <MemoIcon size={10} />
-              <span className="pointer-events-none absolute left-1/2 top-[22px] z-[700] hidden w-max max-w-[190px] -translate-x-1/2 rounded-[8px] border border-[#e6e0da] bg-white px-3 py-2 text-left text-[11px] font-[600] leading-[1.45] text-[#544b44] shadow-[0_8px_20px_rgba(52,40,34,0.16)] group-hover:inline-block">
+              <span className="pointer-events-none absolute right-0 top-[22px] z-[9999] hidden w-max max-w-[190px] rounded-[8px] border border-[#e6e0da] bg-white px-3 py-2 text-left text-[11px] font-[600] leading-[1.45] text-[#544b44] shadow-[0_8px_20px_rgba(52,40,34,0.16)] group-hover:inline-block">
                 {ev.memo}
               </span>
             </span>
@@ -1481,7 +1620,7 @@ function EventCard({ ev, cat, dragging, onEdit, onDragStart, onDragOver, onDrop,
               onClick={(e) => { e.stopPropagation(); window.open(normalizedUrl, "_blank", "noopener,noreferrer"); }}
             >
               <LinkIcon size={10} />
-              <span className="pointer-events-none absolute right-0 top-[22px] z-[700] hidden max-w-[220px] truncate rounded-[8px] border border-[#e6e0da] bg-white px-3 py-2 text-left text-[11px] font-[600] leading-[1.45] text-[#544b44] shadow-[0_8px_20px_rgba(52,40,34,0.16)] group-hover:inline-block">
+              <span className="pointer-events-none absolute right-0 top-[22px] z-[9999] hidden max-w-[220px] truncate rounded-[8px] border border-[#e6e0da] bg-white px-3 py-2 text-left text-[11px] font-[600] leading-[1.45] text-[#544b44] shadow-[0_8px_20px_rgba(52,40,34,0.16)] group-hover:inline-block">
                 {ev.url}
               </span>
             </span>
@@ -1492,21 +1631,21 @@ function EventCard({ ev, cat, dragging, onEdit, onDragStart, onDragOver, onDrop,
   );
 }
 
-function RoutineCard({ ev, setState, routineMonthKey }) {
-  return <button onClick={(e) => { e.stopPropagation(); setState((s) => ({ ...s, routineDoneByMonth: { ...s.routineDoneByMonth, [routineMonthKey]: { ...(s.routineDoneByMonth?.[routineMonthKey] || {}), [ev.routineTodoId]: !ev.done } } })); }} className={cx("block w-full bg-transparent px-[2px] py-[1px] text-left text-[11px] font-bold text-[#777] transition-opacity", ev.done && "opacity-40 line-through")}>✓ {ev.title}</button>;
+function RoutineCard({ ev, setState, routineMonthKey, dim = false }) {
+  return <button onClick={(e) => { e.stopPropagation(); setState((s) => ({ ...s, routineDoneByMonth: { ...s.routineDoneByMonth, [routineMonthKey]: { ...(s.routineDoneByMonth?.[routineMonthKey] || {}), [ev.routineTodoId]: !ev.done } } })); }} className={cx("block w-full bg-transparent px-[2px] py-[1px] text-left text-[11px] font-bold text-[#777] transition-opacity", dim && "opacity-45", ev.done && "opacity-40 line-through")}>✓ {ev.title}</button>;
 }
 
 function Section({ title, children, onAdd, noTop }) {
-  return <section className="border-t border-[#dedede] pt-[18px]" style={{ marginTop: noTop ? 22 : 22 }}><div className="flex items-center justify-between text-[15px] font-[900] tracking-[0em]"><span>{title}</span><button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onAdd?.(); }} className="rounded-full p-1 hover:bg-[#f0f0f0]"><Plus size={22} strokeWidth={2.5} /></button></div>{children}</section>;
+  return <section className="group/section border-t border-[#dedede] pt-[18px]" style={{ marginTop: noTop ? 22 : 22 }}><div className="flex items-center justify-between text-[15px] font-[900] tracking-[0em]"><span>{title}</span><button type="button" aria-label={`${title} 편집`} title="편집" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onAdd?.(); }} className="grid h-[26px] w-[26px] place-items-center rounded-full border border-[#e8e8e8] bg-white/90 text-[12px] font-black text-[#111] opacity-0 shadow-[0_6px_14px_rgba(0,0,0,0.10)] transition-opacity duration-150 hover:bg-white group-hover/section:opacity-100">✎</button></div>{children}</section>;
 }
 
-function Todo({ todo, routineMonthKey, routineDoneByMonth, onToggle, onDelete }) {
+function Todo({ todo, routineMonthKey, routineDoneByMonth, onToggle, onEdit }) {
   const done = todo.fixed && routineMonthKey ? Boolean(routineDoneByMonth?.[routineMonthKey]?.[todo.id]) : Boolean(todo.done);
   return <div className={`group mt-[16px] flex items-center gap-[10px] text-[14px] font-[600] tracking-[0em] ${done ? "text-[#aaa] line-through" : "text-[#555]"}`}>
     <input type="checkbox" checked={done} onChange={(e) => { e.stopPropagation(); onToggle?.(todo); }} className="h-[15px] w-[15px] shrink-0 accent-[#cfcfcf]" />
     <button type="button" onClick={() => onToggle?.(todo)} className="min-w-0 flex-1 truncate text-left">{todo.text}</button>
     {todo.day && <span className="shrink-0 text-[8px] text-[#aaa]">{todo.day}일</span>}
-    <button type="button" onClick={(e) => { e.stopPropagation(); onDelete?.(todo); }} className="grid h-[20px] w-[20px] shrink-0 place-items-center rounded-full text-[14px] text-[#aaa] opacity-0 hover:bg-[#eee] group-hover:opacity-100">×</button>
+    <button type="button" onClick={(e) => { e.stopPropagation(); onEdit?.(todo); }} className="grid h-[20px] w-[20px] shrink-0 place-items-center rounded-full text-[12px] text-[#aaa] opacity-0 hover:bg-[#eee] group-hover:opacity-100" aria-label="리스트 수정">✎</button>
   </div>;
 }
 
@@ -1526,7 +1665,7 @@ function TimerBar({ state, setState, focusRatio }) {
 
 function EventModal({ selectedDate, editingEvent, target, draft, setDraft, state, onClose, onSave, onDelete, onSaveGroup, onDeleteGroup }) {
   const repeatRoot = target?.baseRepeatId || target?.repeatGroupId || target?.cloneGroupId || target?.baseEventId || (target?.repeatRule && target.repeatRule !== "none" ? target.id : null);
-  return <Modal><ModalHead sub={selectedDate} onClose={onClose} /><div className="space-y-3 p-5"><input value={draft.title} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} autoFocus placeholder="일정 이름" className="w-full rounded-[12px] border border-[#ddd] bg-white p-[11px] text-[14px] outline-none" /><input value={draft.startTime} onChange={(e) => setDraft((d) => ({ ...d, startTime: e.target.value }))} placeholder="시간 예: 13:00" className="w-full rounded-[12px] border border-[#ddd] bg-white p-[11px] text-[14px] outline-none" /><select value={draft.categoryId} onChange={(e) => setDraft((d) => ({ ...d, categoryId: e.target.value }))} className="w-full rounded-[12px] border border-[#ddd] bg-white p-[11px] text-[14px] outline-none">{state.categories.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select><select value={draft.repeatRule} onChange={(e) => setDraft((d) => ({ ...d, repeatRule: e.target.value }))} className="w-full rounded-[12px] border border-[#ddd] bg-white p-[11px] text-[14px] outline-none"><option value="none">반복 안 함</option><option value="weekly">매주 반복</option><option value="monthly">매월 반복</option></select><textarea value={draft.memo} onChange={(e) => setDraft((d) => ({ ...d, memo: e.target.value }))} placeholder="메모" className="h-[80px] w-full resize-none rounded-[12px] border border-[#ddd] bg-white p-[11px] text-[14px] outline-none" /><input value={draft.url} onChange={(e) => setDraft((d) => ({ ...d, url: e.target.value }))} placeholder="URL" className="w-full rounded-[12px] border border-[#ddd] bg-white p-[11px] text-[14px] outline-none" /><div className="flex justify-between"><div>{editingEvent && <button onClick={onDelete} className="flex items-center gap-1 rounded-[9px] border border-[#efcaca] bg-[#fff6f6] px-3 py-2 text-[13px] font-bold text-[#c77777] shadow-[0_2px_6px_rgba(120,70,70,0.06)]"><Trash2 size={14} />삭제</button>}</div><button onClick={onSave} className="rounded-[8px] bg-[#111] px-[18px] py-[9px] text-[13px] font-black text-white">저장</button></div>{repeatRoot && <div className="grid grid-cols-2 gap-2 border-t border-dashed border-[#ddd] pt-3"><button onClick={onSaveGroup} className="rounded-[10px] border bg-[#f4f7fa] px-2 py-2 text-[12px] font-bold text-[#667]">반복 전체 수정</button><button onClick={onDeleteGroup} className="rounded-[10px] border bg-[#fff4f4] px-2 py-2 text-[12px] font-bold text-[#c77]">반복 전체 삭제</button></div>}</div></Modal>;
+  return <Modal><ModalHead sub={selectedDate} onClose={onClose} /><div className="space-y-3 p-5"><input value={draft.title} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} autoFocus placeholder="일정 이름" className="w-full rounded-[12px] border border-[#ddd] bg-white p-[11px] text-[14px] outline-none" /><input value={draft.startTime} onChange={(e) => setDraft((d) => ({ ...d, startTime: e.target.value }))} placeholder="시간 예: 13:00" className="w-full rounded-[12px] border border-[#ddd] bg-white p-[11px] text-[14px] outline-none" /><select value={draft.categoryId} onChange={(e) => setDraft((d) => ({ ...d, categoryId: e.target.value }))} className="w-full rounded-[12px] border border-[#ddd] bg-white p-[11px] text-[14px] outline-none">{state.categories.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select><select value={draft.repeatRule} onChange={(e) => setDraft((d) => ({ ...d, repeatRule: e.target.value, rangeMode: e.target.value !== "none" ? false : d.rangeMode }))} className="w-full rounded-[12px] border border-[#ddd] bg-white p-[11px] text-[14px] outline-none"><option value="none">반복 안 함</option><option value="weekly">매주 반복</option><option value="monthly">매월 반복</option></select>{draft.repeatRule !== "none" && <div className="space-y-2 rounded-[14px] border border-dashed border-[#e5dfd8] bg-[#fffdf9] p-3"><label className="block text-[11px] font-black tracking-[-0.02em] text-[#8b8178]">반복 종료일</label><input type="date" value={draft.repeatUntil || ""} onChange={(e) => setDraft((d) => ({ ...d, repeatUntil: e.target.value }))} className="w-full rounded-[10px] border border-[#ddd] bg-white p-[9px] text-[13px] outline-none" /></div>}{!editingEvent && <div className="space-y-2 rounded-[14px] border border-dashed border-[#e5dfd8] bg-[#fffdf9] p-3"><label className="flex items-center gap-2 text-[11px] font-black tracking-[-0.02em] text-[#8b8178]"><input type="checkbox" checked={Boolean(draft.rangeMode)} onChange={(e) => setDraft((d) => ({ ...d, rangeMode: e.target.checked, repeatRule: e.target.checked ? "none" : d.repeatRule, repeatUntil: e.target.checked ? "" : d.repeatUntil, rangeStart: d.rangeStart || selectedDate || "" }))} className="h-[14px] w-[14px] accent-[#cfcfcf]" />기간 일정으로 등록</label><div className="text-[11px] font-bold leading-[1.45] text-[#aaa]">여행처럼 시작일~종료일까지 매일 같은 일정이 생성돼요.</div><div className="grid grid-cols-2 gap-2"><label className="block"><span className="mb-1 block text-[10px] font-black text-[#aaa]">시작일</span><input type="date" value={draft.rangeStart || selectedDate || ""} onChange={(e) => setDraft((d) => ({ ...d, rangeStart: e.target.value }))} disabled={!draft.rangeMode} className="w-full rounded-[10px] border border-[#ddd] bg-white p-[9px] text-[13px] outline-none disabled:bg-[#f7f7f7] disabled:text-[#bbb]" /></label><label className="block"><span className="mb-1 block text-[10px] font-black text-[#aaa]">종료일</span><input type="date" value={draft.rangeEnd || ""} onChange={(e) => setDraft((d) => ({ ...d, rangeEnd: e.target.value }))} disabled={!draft.rangeMode} className="w-full rounded-[10px] border border-[#ddd] bg-white p-[9px] text-[13px] outline-none disabled:bg-[#f7f7f7] disabled:text-[#bbb]" /></label></div></div>}<textarea value={draft.memo} onChange={(e) => setDraft((d) => ({ ...d, memo: e.target.value }))} placeholder="메모" className="h-[80px] w-full resize-none rounded-[12px] border border-[#ddd] bg-white p-[11px] text-[14px] outline-none" /><input value={draft.url} onChange={(e) => setDraft((d) => ({ ...d, url: e.target.value }))} placeholder="URL" className="w-full rounded-[12px] border border-[#ddd] bg-white p-[11px] text-[14px] outline-none" /><div className="flex justify-between"><div>{editingEvent && <button onClick={onDelete} className="flex items-center gap-1 rounded-[9px] border border-[#efcaca] bg-[#fff6f6] px-3 py-2 text-[13px] font-bold text-[#c77777] shadow-[0_2px_6px_rgba(120,70,70,0.06)]"><Trash2 size={14} />삭제</button>}</div><button onClick={onSave} className="rounded-[8px] bg-[#111] px-[18px] py-[9px] text-[13px] font-black text-white">저장</button></div>{repeatRoot && <div className="grid grid-cols-2 gap-2 border-t border-dashed border-[#ddd] pt-3"><button onClick={onSaveGroup} className="rounded-[10px] border bg-[#f4f7fa] px-2 py-2 text-[12px] font-bold text-[#667]">반복 전체 수정</button><button onClick={onDeleteGroup} className="rounded-[10px] border bg-[#fff4f4] px-2 py-2 text-[12px] font-bold text-[#c77]">반복 전체 삭제</button></div>}</div></Modal>;
 }
 
 function GuideModal({ onClose }) {
@@ -1689,11 +1828,71 @@ function SettingsModal({state, setState, driveStatus, driveConnected, updateStat
         <input value={state.driveClientSecret || ""} onChange={(e) => setState((s) => ({ ...s, driveClientSecret: e.target.value }))} placeholder="Google OAuth Client Secret" type="password" className="h-[34px] rounded-[10px] border border-[#e5e5e5] bg-white px-3 text-[11px] outline-none" /><div className="mb-2 flex items-center justify-between rounded-[10px] bg-white px-3 py-2 text-[11px] text-[#777]"><span>{driveStatus}</span><span>{state.driveLastSyncedAt ? new Date(state.driveLastSyncedAt).toLocaleString() : "미동기화"}</span></div><div className="grid grid-cols-3 gap-2"><button onClick={onDriveConnect} className="rounded-[10px] border bg-white px-2 py-2 text-[11px] font-bold text-[#667]">연결</button><button onClick={onDriveLoad} disabled={!driveConnected} className="rounded-[10px] border bg-white px-2 py-2 text-[11px] font-bold text-[#667] disabled:opacity-40">불러오기</button><button onClick={onDriveSave} disabled={!driveConnected} className="rounded-[10px] border bg-white px-2 py-2 text-[11px] font-bold text-[#667] disabled:opacity-40">저장</button></div><button onClick={() => setState((s) => ({ ...s, driveAutoSync: !s.driveAutoSync }))} className="mt-2 flex w-full items-center justify-between rounded-[10px] border bg-white px-3 py-2 text-[11px] font-bold text-[#667]"><span>자동 동기화</span><span className={cx("relative h-5 w-9 rounded-full border p-[2px]", state.driveAutoSync ? "bg-[#c7d9f0] border-[#9cb8db]" : "bg-[#ececec] border-[#dddddd]")}><span className={cx("block h-4 w-4 rounded-full bg-white shadow transition", state.driveAutoSync && "translate-x-4")} /></span></button></div><div className="mt-4 rounded-[14px] border border-dashed border-[#e5e5e5] bg-[#fafafa] p-3"><div className="mb-2 flex items-center justify-between"><div><div className="text-[11px] font-black tracking-[0.08em] text-[#777]">업데이트 확인</div><div className="text-[8px] text-[#aaa]">현재 버전 {APP_VERSION}</div></div><button onClick={onCheckUpdate} className="rounded-[8px] border bg-white px-3 py-2 text-[11px] font-bold text-[#666]">확인</button></div><div className="rounded-[10px] bg-white px-3 py-2 text-[11px] text-[#777]">{updateStatus}{state.updateLastCheckedAt ? ` · ${new Date(state.updateLastCheckedAt).toLocaleString()}` : ""}</div></div><div className="mt-4 grid grid-cols-4 gap-2 border-t border-dashed border-[#e5e5e5] pt-4"><button onClick={resetAll} className="rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">초기화</button><button onClick={backup} className="rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">백업</button><label className="flex cursor-pointer items-center justify-center rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">불러오기<input ref={backupRef} type="file" accept="application/json" className="hidden" onChange={(e) => loadBackup(e.target.files?.[0])} /></label><button onClick={onBackup} className="rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">백업관리</button></div></div></Modal>;
 }
 
-function TodoAddModal({ target, draft, setDraft, onSave, onClose }) {
+function TodoManageModal({ target, drafts, setDrafts, onSave, onClose }) {
   const isFixed = target === "fixed";
-  return <Modal size="w-[340px]"><ModalHead sub="todo" onClose={onClose} /><div className="space-y-3 p-5"><input value={draft.text} onChange={(e) => setDraft((d) => ({ ...d, text: e.target.value }))} autoFocus placeholder="내용 입력" className="w-full rounded-[12px] border border-[#ddd] bg-white p-[11px] text-[14px] outline-none" />{isFixed && <select value={draft.day} onChange={(e) => setDraft((d) => ({ ...d, day: e.target.value }))} className="w-full rounded-[12px] border border-[#ddd] bg-white p-[11px] text-[14px] outline-none">
-        {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => <option key={day} value={day}>{day}일</option>)}
-      </select>}<button onClick={onSave} className="w-full rounded-[12px] bg-[#111] py-3 text-[13px] font-black text-white">추가</button></div></Modal>;
+  const title = isFixed ? "fixed list" : "today list";
+  const addTodo = () => {
+    setDrafts((p) => [
+      ...p,
+      {
+        id: `todo-${uid()}`,
+        text: "",
+        done: false,
+        fixed: isFixed,
+        day: isFixed ? 1 : undefined,
+      },
+    ]);
+  };
+
+  return <Modal size="w-[520px]"><ModalHead sub={title} onClose={onClose} /><div className="space-y-3 p-5">
+    {drafts.length ? drafts.map((todo, i) => (
+      <div key={todo.id || i} className={cx("grid gap-2", isFixed ? "grid-cols-[1fr_82px_58px_28px]" : "grid-cols-[1fr_58px_28px]")}>
+        <input
+          value={todo.text || ""}
+          onChange={(e) => setDrafts((p) => p.map((x, idx) => idx === i ? { ...x, text: e.target.value } : x))}
+          placeholder="내용 입력"
+          className="h-[36px] rounded-[10px] border border-[#ddd] bg-white px-3 text-[13px] outline-none"
+        />
+        {isFixed && (
+          <select
+            value={todo.day || 1}
+            onChange={(e) => setDrafts((p) => p.map((x, idx) => idx === i ? { ...x, day: Number(e.target.value) || 1 } : x))}
+            className="h-[36px] rounded-[10px] border border-[#ddd] bg-white px-2 text-[12px] outline-none"
+          >
+            {Array.from({ length: 31 }, (_, dayIndex) => dayIndex + 1).map((day) => <option key={day} value={day}>{day}일</option>)}
+          </select>
+        )}
+        <div className="flex items-center justify-center gap-1">
+          <button
+            type="button"
+            onClick={() => setDrafts((p) => { const n = [...p]; if (i > 0) [n[i - 1], n[i]] = [n[i], n[i - 1]]; return n; })}
+            className="h-[32px] w-[24px] rounded-[8px] text-[15px] font-black text-[#333] hover:bg-[#f2f2f2]"
+            aria-label="위로 이동"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            onClick={() => setDrafts((p) => { const n = [...p]; if (i < n.length - 1) [n[i + 1], n[i]] = [n[i], n[i + 1]]; return n; })}
+            className="h-[32px] w-[24px] rounded-[8px] text-[15px] font-black text-[#333] hover:bg-[#f2f2f2]"
+            aria-label="아래로 이동"
+          >
+            ↓
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={() => setDrafts((p) => p.filter((_, idx) => idx !== i))}
+          className="h-[32px] rounded-[8px] text-[16px] font-black text-[#333] hover:bg-[#fff0f2] hover:text-[#c77b8a]"
+          aria-label="삭제"
+        >
+          ×
+        </button>
+      </div>
+    )) : <div className="rounded-[12px] border border-dashed border-[#e5e5e5] py-6 text-center text-[12px] font-bold text-[#aaa]">등록된 리스트가 없어요.</div>}
+    <button type="button" onClick={addTodo} className="w-full rounded-[12px] border border-dashed border-[#e5e5e5] py-3 text-[13px] font-bold text-[#333]">＋ 추가</button>
+    <button type="button" onClick={onSave} className="w-full rounded-[12px] bg-[#111] py-3 text-[13px] font-black text-white">저장</button>
+  </div></Modal>;
 }
 
 function CategoryModal({ drafts, setDrafts, onClose, onSave }) {
