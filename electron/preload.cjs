@@ -36,3 +36,11 @@ contextBridge.exposeInMainWorld("__XL_GOOGLE_AUTH__", async (payload) => {
     return { ok: false, error: err?.message || "Google 로그인 실패" };
   }
 });
+
+
+const autoLaunchApi = {
+  get: () => ipcRenderer.invoke("xl:get-auto-launch"),
+  set: (enabled) => ipcRenderer.invoke("xl:set-auto-launch", enabled),
+};
+
+contextBridge.exposeInMainWorld("__XL_AUTO_LAUNCH__", autoLaunchApi);

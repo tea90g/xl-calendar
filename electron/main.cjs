@@ -66,6 +66,27 @@ const { execFile } = require("child_process");
 
 const isDev = !app.isPackaged;
 
+function getAutoLaunchEnabled() {
+  try {
+    return app.getLoginItemSettings().openAtLogin;
+  } catch {
+    return false;
+  }
+}
+
+function setAutoLaunchEnabled(enabled) {
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: Boolean(enabled),
+      path: process.execPath,
+    });
+    return getAutoLaunchEnabled();
+  } catch {
+    return false;
+  }
+}
+
+
 const DATA_FILE_NAME = "calendar-data.json";
 const BACKUP_KEEP_COUNT = 20;
 
@@ -629,6 +650,16 @@ ipcMain.handle("xl:list-backups", async () => listStateBackups());
 ipcMain.handle("xl:restore-backup", async (_event, fileName) => restoreStateBackup(fileName));
 
 ipcMain.handle("save-calendar-state", async (_event, data) => saveStateToFile(data));
+
+
+
+ipcMain.handle("xl:get-auto-launch", async () => {
+  return getAutoLaunchEnabled();
+});
+
+ipcMain.handle("xl:set-auto-launch", async (_event, enabled) => {
+  return setAutoLaunchEnabled(enabled);
+});
 
 ipcMain.handle("load-calendar-state", async () => loadStateFromFile());
 

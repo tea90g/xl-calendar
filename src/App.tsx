@@ -55,6 +55,10 @@ declare global {
       saveCalendarState?: (data: unknown) => Promise<void>;
       loadCalendarState?: () => Promise<unknown>;
     };
+    __XL_AUTO_LAUNCH__?: {
+      get?: () => Promise<boolean>;
+      set?: (enabled: boolean) => Promise<boolean>;
+    };
     electron?: {
       saveCalendarState?: (data: unknown) => Promise<void>;
       loadCalendarState?: () => Promise<unknown>;
@@ -144,6 +148,7 @@ function starterState() {
     driveLastSyncedAt: "",
     updateLastCheckedAt: "",
     updateDismissedVersion: "",
+    autoLaunchOnStartup: false,
   };
 }
 
@@ -287,7 +292,7 @@ function sortEvent(a, b) {
 }
 
 function Modal({ children, size = "w-[390px]" }) {
-  return <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/20 p-4 backdrop-blur-[1px]" onMouseDown={(e) => e.target === e.currentTarget && e.stopPropagation()}><div className={`${size} overflow-hidden rounded-[16px] border border-[#e6e6e6] bg-[#fcfcfc] shadow-[0_18px_60px_rgba(0,0,0,0.14)]`}>{children}</div></div>;
+  return <div style={{ zIndex: 100000 }} className="fixed inset-0 flex items-center justify-center bg-black/20 p-4 backdrop-blur-[1px]" onMouseDown={(e) => e.target === e.currentTarget && e.stopPropagation()}><div className={`${size} relative z-[1] overflow-hidden rounded-[16px] border border-[#e6e6e6] bg-[#fcfcfc] shadow-[0_18px_60px_rgba(0,0,0,0.14)]`}>{children}</div></div>;
 }
 
 function ModalHead({ title, sub, onClose }) {
@@ -1109,7 +1114,10 @@ ${info.message}` : "";
           <div className="mx-auto mt-[19px] h-[4px] w-[132px] rounded-full bg-[#d4d4d4]" />
           <div className="group relative mt-[23px] flex w-full items-start justify-center overflow-visible rounded-[7px]">
             {activeImage ? <img src={activeImage} alt="calendar" className="block h-auto w-full rounded-[7px] object-contain" /> : <button onClick={() => setImageOpen(true)} className="flex h-[149px] w-full items-center justify-center rounded-[7px] text-[15px] font-bold text-[#999]">이미지 추가</button>}
-            <button onClick={() => setImageOpen(true)} className="absolute right-[9px] top-[9px] flex h-[34px] w-[34px] items-center justify-center rounded-full bg-white/85 opacity-0 shadow-[0_8px_17px_rgba(0,0,0,0.12)] transition-opacity duration-150 hover:opacity-100 group-hover:opacity-100"><MousePointer2 size={12} fill="#111" /></button>
+            <div className="absolute right-[9px] top-[9px] flex gap-[6px] opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+              {activeImage && <button onClick={(e) => { e.stopPropagation(); setState((s) => ({ ...s, image: "", timerImages: { work: "", other: "", away: "" } })); }} className="flex h-[34px] w-[34px] items-center justify-center rounded-full bg-white/85 text-[15px] font-black text-[#c88a96] shadow-[0_8px_17px_rgba(0,0,0,0.12)] hover:bg-white">×</button>}
+              <button onClick={() => setImageOpen(true)} className="flex h-[34px] w-[34px] items-center justify-center rounded-full bg-white/85 shadow-[0_8px_17px_rgba(0,0,0,0.12)] hover:bg-white"><MousePointer2 size={12} fill="#111" /></button>
+            </div>
             <input ref={imageRef} type="file" accept="image/*" className="hidden" onChange={(e) => { loadImage(e.target.files?.[0], state.selectedImageSlot); e.currentTarget.value = ""; }} />
           </div>
           {state.showFixedList && <Section title="MY LIST · 고정" onAdd={() => openTodoAdd(true)}>{state.todos.filter((t) => t.fixed).map((t) => <Todo key={t.id} todo={t} routineMonthKey={routineMonthKey} routineDoneByMonth={state.routineDoneByMonth} onToggle={toggleTodo} onEdit={openTodoEdit} />)}</Section>}
@@ -1136,7 +1144,7 @@ ${info.message}` : "";
       {categoryOpen && <CategoryModal drafts={categoryDrafts} setDrafts={setCategoryDrafts} onClose={() => setCategoryOpen(false)} onSave={saveCategories} />}
       {imageOpen && <ImageModal state={state} setState={setState} imageRef={imageRef} onClose={() => setImageOpen(false)} />}
       {mobileDriveSettingsOpen && (
-        <div className="fixed inset-0 z-[30000] flex items-end justify-center bg-black/35 p-3 md:hidden">
+        <div style={{ zIndex: 100001 }} className="fixed inset-0 flex items-end justify-center bg-black/35 p-3 md:hidden">
           <div className="w-full max-w-[420px] rounded-[22px] bg-white p-4 shadow-[0_20px_50px_rgba(0,0,0,0.18)]">
             <div className="mb-4 flex items-center justify-between">
               <div>
@@ -1518,14 +1526,14 @@ function DayCell({ d, events, holidayMeta, cat, hoverDate, todayKey, dragging, s
 
   return <div data-date={d.key} onDragOver={(e) => { e.preventDefault(); setHoverDate(d.key); }} onDrop={(e) => { e.preventDefault(); const raw = e.dataTransfer.getData("text/plain"); if (raw) moveEvent(JSON.parse(raw), d.key, copyMode); setDragging(null); setHoverDate(null); setCopyMode(false); }} onDoubleClick={() => openNew(d.key)} className={cx("relative h-full min-h-[clamp(102px,12vh,160px)] border-b border-r border-[#efefef] bg-[#fdfdfd] px-[clamp(8px,0.9vw,13px)] py-[clamp(8px,1vh,13px)] [&:nth-child(7n)]:border-r-0", hoverDate === d.key && "ring-2 ring-[#d8eeee] ring-inset", todayKey === d.key && d.current && "before:absolute before:inset-0 before:bg-[#dcdcdc]/30 before:pointer-events-none ring-1 ring-[#dfe5e8] ring-inset")}>
     {!d.current && <span className="pointer-events-none absolute inset-0 z-0 bg-[#f1f1f1]/75" />}
-    <div className="relative z-[1] mb-[2px] flex items-start justify-between gap-1">
+    <div className="relative z-[30] mb-[2px] flex items-start justify-between gap-1">
       <button onClick={() => openNew(d.key)} className={`text-[14px] font-[600] tracking-[0em] ${!d.current ? "text-[#c9cfd3]" : holidayMeta?.kr?.length ? "text-[#ff8da1]" : holidayMeta?.jp?.length ? "text-[#7EA6FF]" : d.dow === 0 ? "text-[#FF8DA1]" : d.dow === 6 ? "text-[#7EA6FF]" : "text-[#555555]"}`}>{d.day}</button>
       {holidayMeta && d.current && (
-        <div className="group/holiday relative flex max-w-[104px] shrink-0 flex-wrap justify-end gap-[2px] pt-[1px]">
+        <div className="group/holiday relative z-[40] flex max-w-[104px] shrink-0 flex-wrap justify-end gap-[2px] pt-[1px]">
           {holidayMeta.kr.length > 0 && <span className="rounded-full bg-[#fff1f4] px-[5px] py-[2px] text-[10px] font-black leading-none text-[#c796a5]">🇰🇷 공휴일</span>}
           {holidayMeta.jp.length > 0 && <span className="rounded-full bg-[#f1f6ff] px-[5px] py-[2px] text-[10px] font-black leading-none text-[#7EA6FF]">🇯🇵 祝日</span>}
           {holidayTitle && (
-            <span className="pointer-events-none absolute right-0 top-[22px] z-[9999] hidden w-max max-w-[220px] whitespace-pre-line rounded-[8px] border border-[#e6e0da] bg-white px-3 py-2 text-left text-[11px] font-[600] leading-[1.45] text-[#544b44] shadow-[0_8px_20px_rgba(52,40,34,0.16)] group-hover/holiday:inline-block">
+            <span className="pointer-events-none absolute right-0 top-[22px] z-[60] hidden w-max max-w-[220px] whitespace-pre-line rounded-[8px] border border-[#e6e0da] bg-white px-3 py-2 text-left text-[11px] font-[600] leading-[1.45] text-[#544b44] shadow-[0_8px_20px_rgba(52,40,34,0.16)] group-hover/holiday:inline-block">
               {holidayTitle}
             </span>
           )}
@@ -1609,7 +1617,7 @@ function EventCard({ ev, cat, dragging, onEdit, onDragStart, onDragOver, onDrop,
               onClick={(e) => e.stopPropagation()}
             >
               <MemoIcon size={10} />
-              <span className="pointer-events-none absolute right-0 top-[22px] z-[9999] hidden w-max max-w-[190px] rounded-[8px] border border-[#e6e0da] bg-white px-3 py-2 text-left text-[11px] font-[600] leading-[1.45] text-[#544b44] shadow-[0_8px_20px_rgba(52,40,34,0.16)] group-hover:inline-block">
+              <span className="pointer-events-none absolute right-0 top-[22px] z-[60] hidden w-max max-w-[190px] rounded-[8px] border border-[#e6e0da] bg-white px-3 py-2 text-left text-[11px] font-[600] leading-[1.45] text-[#544b44] shadow-[0_8px_20px_rgba(52,40,34,0.16)] group-hover:inline-block">
                 {ev.memo}
               </span>
             </span>
@@ -1620,7 +1628,7 @@ function EventCard({ ev, cat, dragging, onEdit, onDragStart, onDragOver, onDrop,
               onClick={(e) => { e.stopPropagation(); window.open(normalizedUrl, "_blank", "noopener,noreferrer"); }}
             >
               <LinkIcon size={10} />
-              <span className="pointer-events-none absolute right-0 top-[22px] z-[9999] hidden max-w-[220px] truncate rounded-[8px] border border-[#e6e0da] bg-white px-3 py-2 text-left text-[11px] font-[600] leading-[1.45] text-[#544b44] shadow-[0_8px_20px_rgba(52,40,34,0.16)] group-hover:inline-block">
+              <span className="pointer-events-none absolute right-0 top-[22px] z-[60] hidden max-w-[220px] truncate rounded-[8px] border border-[#e6e0da] bg-white px-3 py-2 text-left text-[11px] font-[600] leading-[1.45] text-[#544b44] shadow-[0_8px_20px_rgba(52,40,34,0.16)] group-hover:inline-block">
                 {ev.url}
               </span>
             </span>
@@ -1714,7 +1722,50 @@ function SettingsModal({state, setState, driveStatus, driveConnected, updateStat
   const [trackedDraft, setTrackedDraft] = useState("");
   const [programChoices, setProgramChoices] = useState([]);
   const [programPickerOpen, setProgramPickerOpen] = useState(false);
+  const [autoLaunchStatus, setAutoLaunchStatus] = useState("EXE에서 사용 가능");
+  const autoLaunchSupported = typeof window !== "undefined" && Boolean(window.__XL_AUTO_LAUNCH__?.get && window.__XL_AUTO_LAUNCH__?.set);
   const toggles = [["고정 리스트", "showFixedList"], ["오늘 리스트", "showTodayList"], ["타이머 바", "showTimerBar"], ["일본 祝日", "showJapanHolidays"]];
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadAutoLaunch() {
+      if (!autoLaunchSupported) {
+        setAutoLaunchStatus("웹에서는 미지원");
+        return;
+      }
+      try {
+        const enabled = await window.__XL_AUTO_LAUNCH__.get();
+        if (!cancelled) {
+          setState((s) => ({ ...s, autoLaunchOnStartup: Boolean(enabled) }));
+          setAutoLaunchStatus(Boolean(enabled) ? "재부팅 시 자동시작 켜짐" : "재부팅 시 자동시작 꺼짐");
+        }
+      } catch {
+        if (!cancelled) setAutoLaunchStatus("자동시작 상태 확인 실패");
+      }
+    }
+    loadAutoLaunch();
+    return () => {
+      cancelled = true;
+    };
+  }, [autoLaunchSupported]);
+
+  async function toggleAutoLaunch() {
+    if (!autoLaunchSupported) {
+      setAutoLaunchStatus("EXE 앱에서만 사용할 수 있어요.");
+      return;
+    }
+
+    const next = !state.autoLaunchOnStartup;
+    setAutoLaunchStatus(next ? "자동시작 켜는 중..." : "자동시작 끄는 중...");
+
+    try {
+      const enabled = await window.__XL_AUTO_LAUNCH__.set(next);
+      setState((s) => ({ ...s, autoLaunchOnStartup: Boolean(enabled) }));
+      setAutoLaunchStatus(Boolean(enabled) ? "재부팅 시 자동시작 켜짐" : "재부팅 시 자동시작 꺼짐");
+    } catch {
+      setAutoLaunchStatus("자동시작 설정 실패");
+    }
+  }
   function addTrackedProgram(nameFromPicker = "") {
     const name = String(nameFromPicker || trackedDraft).trim();
     if (!name) return;
@@ -1825,7 +1876,7 @@ function SettingsModal({state, setState, driveStatus, driveConnected, updateStat
 )}
 
 <div className="space-y-2">{state.trackedPrograms.map((program) => <div key={program} className="flex items-center gap-2 rounded-[10px] border bg-white px-3 py-2"><span className="h-[14px] w-[14px] rounded-full border border-[#d6d6d6] bg-[#f6f6f6]" /><span className="flex-1 truncate text-[12px] font-[600] text-[#555]">{program}</span><button onClick={() => removeTrackedProgram(program)} className="text-[13px] text-[#aaa]">×</button></div>)}</div></div></div><div className="mt-4 rounded-[14px] border border-dashed border-[#d9e4f0] bg-[#f8fbff] p-3"><div className="mb-2 text-[11px] font-black tracking-[0.08em] text-[#667]">Google Drive 연동</div><input value={state.driveClientId || ""} onChange={(e) => setState((s) => ({ ...s, driveClientId: e.target.value }))} placeholder="Google OAuth Client ID" className="mb-2 w-full rounded-[10px] border border-[#dfe6ee] bg-white px-3 py-2 text-[11px] outline-none" />
-        <input value={state.driveClientSecret || ""} onChange={(e) => setState((s) => ({ ...s, driveClientSecret: e.target.value }))} placeholder="Google OAuth Client Secret" type="password" className="h-[34px] rounded-[10px] border border-[#e5e5e5] bg-white px-3 text-[11px] outline-none" /><div className="mb-2 flex items-center justify-between rounded-[10px] bg-white px-3 py-2 text-[11px] text-[#777]"><span>{driveStatus}</span><span>{state.driveLastSyncedAt ? new Date(state.driveLastSyncedAt).toLocaleString() : "미동기화"}</span></div><div className="grid grid-cols-3 gap-2"><button onClick={onDriveConnect} className="rounded-[10px] border bg-white px-2 py-2 text-[11px] font-bold text-[#667]">연결</button><button onClick={onDriveLoad} disabled={!driveConnected} className="rounded-[10px] border bg-white px-2 py-2 text-[11px] font-bold text-[#667] disabled:opacity-40">불러오기</button><button onClick={onDriveSave} disabled={!driveConnected} className="rounded-[10px] border bg-white px-2 py-2 text-[11px] font-bold text-[#667] disabled:opacity-40">저장</button></div><button onClick={() => setState((s) => ({ ...s, driveAutoSync: !s.driveAutoSync }))} className="mt-2 flex w-full items-center justify-between rounded-[10px] border bg-white px-3 py-2 text-[11px] font-bold text-[#667]"><span>자동 동기화</span><span className={cx("relative h-5 w-9 rounded-full border p-[2px]", state.driveAutoSync ? "bg-[#c7d9f0] border-[#9cb8db]" : "bg-[#ececec] border-[#dddddd]")}><span className={cx("block h-4 w-4 rounded-full bg-white shadow transition", state.driveAutoSync && "translate-x-4")} /></span></button></div><div className="mt-4 rounded-[14px] border border-dashed border-[#e5e5e5] bg-[#fafafa] p-3"><div className="mb-2 flex items-center justify-between"><div><div className="text-[11px] font-black tracking-[0.08em] text-[#777]">업데이트 확인</div><div className="text-[8px] text-[#aaa]">현재 버전 {APP_VERSION}</div></div><button onClick={onCheckUpdate} className="rounded-[8px] border bg-white px-3 py-2 text-[11px] font-bold text-[#666]">확인</button></div><div className="rounded-[10px] bg-white px-3 py-2 text-[11px] text-[#777]">{updateStatus}{state.updateLastCheckedAt ? ` · ${new Date(state.updateLastCheckedAt).toLocaleString()}` : ""}</div></div><div className="mt-4 grid grid-cols-4 gap-2 border-t border-dashed border-[#e5e5e5] pt-4"><button onClick={resetAll} className="rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">초기화</button><button onClick={backup} className="rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">백업</button><label className="flex cursor-pointer items-center justify-center rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">불러오기<input ref={backupRef} type="file" accept="application/json" className="hidden" onChange={(e) => loadBackup(e.target.files?.[0])} /></label><button onClick={onBackup} className="rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">백업관리</button></div></div></Modal>;
+        <input value={state.driveClientSecret || ""} onChange={(e) => setState((s) => ({ ...s, driveClientSecret: e.target.value }))} placeholder="Google OAuth Client Secret" type="password" className="h-[34px] rounded-[10px] border border-[#e5e5e5] bg-white px-3 text-[11px] outline-none" /><div className="mb-2 flex items-center justify-between rounded-[10px] bg-white px-3 py-2 text-[11px] text-[#777]"><span>{driveStatus}</span><span>{state.driveLastSyncedAt ? new Date(state.driveLastSyncedAt).toLocaleString() : "미동기화"}</span></div><div className="grid grid-cols-3 gap-2"><button onClick={onDriveConnect} className="rounded-[10px] border bg-white px-2 py-2 text-[11px] font-bold text-[#667]">연결</button><button onClick={onDriveLoad} disabled={!driveConnected} className="rounded-[10px] border bg-white px-2 py-2 text-[11px] font-bold text-[#667] disabled:opacity-40">불러오기</button><button onClick={onDriveSave} disabled={!driveConnected} className="rounded-[10px] border bg-white px-2 py-2 text-[11px] font-bold text-[#667] disabled:opacity-40">저장</button></div><button onClick={() => setState((s) => ({ ...s, driveAutoSync: !s.driveAutoSync }))} className="mt-2 flex w-full items-center justify-between rounded-[10px] border bg-white px-3 py-2 text-[11px] font-bold text-[#667]"><span>자동 동기화</span><span className={cx("relative h-5 w-9 rounded-full border p-[2px]", state.driveAutoSync ? "bg-[#c7d9f0] border-[#9cb8db]" : "bg-[#ececec] border-[#dddddd]")}><span className={cx("block h-4 w-4 rounded-full bg-white shadow transition", state.driveAutoSync && "translate-x-4")} /></span></button></div><div className="mt-4 rounded-[14px] border border-dashed border-[#e5e5e5] bg-[#fafafa] p-3"><div className="mb-2 flex items-center justify-between"><div><div className="text-[11px] font-black tracking-[0.08em] text-[#777]">업데이트 확인</div><div className="text-[8px] text-[#aaa]">현재 버전 {APP_VERSION}</div></div><button onClick={onCheckUpdate} className="rounded-[8px] border bg-white px-3 py-2 text-[11px] font-bold text-[#666]">확인</button></div><div className="rounded-[10px] bg-white px-3 py-2 text-[11px] text-[#777]">{updateStatus}{state.updateLastCheckedAt ? ` · ${new Date(state.updateLastCheckedAt).toLocaleString()}` : ""}</div><button type="button" onClick={toggleAutoLaunch} className="mt-2 flex w-full items-center justify-between rounded-[10px] border bg-white px-3 py-2 text-[11px] font-bold text-[#667]"><span>재부팅 시 자동시작</span><span className={cx("relative h-5 w-9 rounded-full border p-[2px]", state.autoLaunchOnStartup ? "bg-[#c7d9f0] border-[#9cb8db]" : "bg-[#ececec] border-[#dddddd]")}><span className={cx("block h-4 w-4 rounded-full bg-white shadow transition", state.autoLaunchOnStartup && "translate-x-4")} /></span></button><div className="mt-1 rounded-[10px] bg-white/70 px-3 py-2 text-[10px] font-[700] text-[#aaa]">{autoLaunchStatus}</div></div><div className="mt-4 grid grid-cols-4 gap-2 border-t border-dashed border-[#e5e5e5] pt-4"><button onClick={resetAll} className="rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">초기화</button><button onClick={backup} className="rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">백업</button><label className="flex cursor-pointer items-center justify-center rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">불러오기<input ref={backupRef} type="file" accept="application/json" className="hidden" onChange={(e) => loadBackup(e.target.files?.[0])} /></label><button onClick={onBackup} className="rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">백업관리</button></div></div></Modal>;
 }
 
 function TodoManageModal({ target, drafts, setDrafts, onSave, onClose }) {
@@ -1911,5 +1962,25 @@ function CategoryModal({ drafts, setDrafts, onClose, onSave }) {
 }
 
 function ImageModal({ state, setState, imageRef, onClose }) {
-  return <Modal size="w-[320px]"><ModalHead sub="image" onClose={onClose} /><div className="space-y-3 p-5"><div className="grid grid-cols-4 gap-2"><button onClick={() => setState((s) => ({ ...s, fixedImageMode: !s.fixedImageMode }))} className={cx("rounded-[10px] border px-2 py-2 text-[8px]", state.fixedImageMode && "bg-[#efe5c8]")}>{state.fixedImageMode ? "고정 ON" : "고정 OFF"}</button>{["work", "other", "away"].map((slot) => <button key={slot} onClick={() => setState((s) => ({ ...s, selectedImageSlot: slot }))} className={cx("rounded-[10px] border px-2 py-2 text-[11px]", state.selectedImageSlot === slot && "bg-[#dce7f3]")}>{slot === "work" ? "작업" : slot === "other" ? "그 외" : "자리"}</button>)}</div><div className="grid min-h-[120px] place-items-center overflow-visible rounded-[12px] bg-transparent">{state.timerImages?.[state.selectedImageSlot] || state.image ? <img src={state.timerImages?.[state.selectedImageSlot] || state.image} alt="preview" className="block h-auto w-full rounded-[12px] object-contain" /> : <span className="text-[12px] text-[#aaa]">이미지 없음</span>}</div><button onClick={() => imageRef.current?.click()} className="w-full rounded-[12px] border bg-white py-3 text-[13px] font-bold">이미지 변경</button></div></Modal>;
+  const currentSlot = state.selectedImageSlot || "work";
+  const hasSlotImage = Boolean(state.timerImages?.[currentSlot]);
+  const hasAnyImage = Boolean(state.timerImages?.[currentSlot] || state.image);
+
+  const clearCurrentImage = () => {
+    setState((s) => ({
+      ...s,
+      timerImages: { ...(s.timerImages || {}), [currentSlot]: "" },
+      image: currentSlot === (s.selectedImageSlot || "work") ? "" : s.image,
+    }));
+  };
+
+  const clearAllImages = () => {
+    setState((s) => ({
+      ...s,
+      image: "",
+      timerImages: { work: "", other: "", away: "" },
+    }));
+  };
+
+  return <Modal size="w-[320px]"><ModalHead sub="image" onClose={onClose} /><div className="space-y-3 p-5"><div className="grid grid-cols-4 gap-2"><button onClick={() => setState((s) => ({ ...s, fixedImageMode: !s.fixedImageMode }))} className={cx("rounded-[10px] border px-2 py-2 text-[8px]", state.fixedImageMode && "bg-[#efe5c8]")}>{state.fixedImageMode ? "고정 ON" : "고정 OFF"}</button>{["work", "other", "away"].map((slot) => <button key={slot} onClick={() => setState((s) => ({ ...s, selectedImageSlot: slot }))} className={cx("rounded-[10px] border px-2 py-2 text-[11px]", state.selectedImageSlot === slot && "bg-[#dce7f3]")}>{slot === "work" ? "작업" : slot === "other" ? "그 외" : "자리"}</button>)}</div><div className="grid min-h-[120px] place-items-center overflow-visible rounded-[12px] bg-transparent">{hasAnyImage ? <img src={state.timerImages?.[currentSlot] || state.image} alt="preview" className="block h-auto w-full rounded-[12px] object-contain" /> : <span className="text-[12px] text-[#aaa]">이미지 없음</span>}</div><button onClick={() => imageRef.current?.click()} className="w-full rounded-[12px] border bg-white py-3 text-[13px] font-bold">이미지 변경</button><div className="grid grid-cols-2 gap-2"><button onClick={clearCurrentImage} disabled={!hasSlotImage && !state.image} className="rounded-[12px] border border-[#f0d7dc] bg-[#fff9fa] py-3 text-[12px] font-black text-[#c88a96] disabled:opacity-35">현재 이미지 삭제</button><button onClick={clearAllImages} disabled={!hasAnyImage} className="rounded-[12px] border border-[#e7e7e7] bg-white py-3 text-[12px] font-bold text-[#999] disabled:opacity-35">전체 이미지 삭제</button></div></div></Modal>;
 }
