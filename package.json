@@ -1,0 +1,54 @@
+{
+  "name": "xl-calendar",
+  "version": "1.0.1",
+  "private": true,
+  "description": "XL Calendar - React + Electron Windows desktop app",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "build:web": "vite build",
+    "build:win": "vite build && electron-builder --win nsis",
+    "start": "electron ."
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "active-win": "^8.2.1",
+    "lucide-react": "latest",
+    "ps-list": "^9.0.0",
+    "react": "latest",
+    "react-dom": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "autoprefixer": "latest",
+    "concurrently": "latest",
+    "electron": "latest",
+    "electron-builder": "latest",
+    "postcss": "latest",
+    "tailwindcss": "^3.4.17",
+    "wait-on": "latest"
+  },
+  "build": {
+    "appId": "com.xl.calendar",
+    "productName": "XL Calendar",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "artifactName": "XL-Calendar-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

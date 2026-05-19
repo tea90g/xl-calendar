@@ -1,0 +1,17 @@
+{
+  "name": "xl-calendar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "XL Calendar - React + Electron Windows desktop app",
+  "main": "electron/main.cjs",
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "active-win": "^8.2.1",
+    "lucide-react": "latest",
+    "ps-list": "^9.0.0",
+    "react": "latest",
+    "react-dom": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  }
+}
