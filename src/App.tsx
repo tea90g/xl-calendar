@@ -82,6 +82,30 @@ const HIDDEN_CATEGORIES = {
 
 const COLOR_POOL = ["#cfeaed", "#f3d7dd", "#f4ebc9", "#d9d2ea", "#dbe7d3", "#d6e5f3", "#f1ddd2", "#d8dde7"];
 
+const ANNIVERSARY_COLORS = [
+  { id: "cream", label: "크림", color: "#F4ECE7", tape: "rgba(255,255,255,0.82)", heart: "#DDB9A5" },
+  { id: "pink", label: "핑크", color: "#F5E5E7", tape: "rgba(255,255,255,0.82)", heart: "#DCAEB8" },
+  { id: "sky", label: "하늘", color: "#E7EEF5", tape: "rgba(255,255,255,0.82)", heart: "#AFC4D8" },
+  { id: "lavender", label: "보라", color: "#ECE8F5", tape: "rgba(255,255,255,0.82)", heart: "#C5B8DF" },
+  { id: "mint", label: "민트", color: "#E8F1EC", tape: "rgba(255,255,255,0.82)", heart: "#B7CEC1" },
+  { id: "beige", label: "베이지", color: "#EEE5D9", tape: "rgba(255,255,255,0.82)", heart: "#CFB99F" },
+  { id: "gray", label: "그레이", color: "#E9E9E9", tape: "rgba(255,255,255,0.82)", heart: "#BDBDBD" },
+];
+
+const getAnniversaryColor = (id) => ANNIVERSARY_COLORS.find((c) => c.id === id) || ANNIVERSARY_COLORS[0];
+
+const getAnniversaryPalette = (item = {}) => {
+  const base = getAnniversaryColor(item.colorId);
+  const custom = String(item.customColor || "").trim();
+  if (!custom) return base;
+  return {
+    ...base,
+    color: custom,
+    tape: custom,
+    heart: custom,
+  };
+};
+
 const KR_HOLIDAYS = {
   2025: [["2025-01-01", "새해첫날"], ["2025-03-01", "삼일절"], ["2025-05-05", "어린이날"], ["2025-06-06", "현충일"], ["2025-08-15", "광복절"], ["2025-10-03", "개천절"], ["2025-10-09", "한글날"], ["2025-12-25", "크리스마스"]],
   2026: [["2026-01-01", "새해첫날"], ["2026-02-16", "설날 연휴"], ["2026-02-17", "설날"], ["2026-02-18", "설날 연휴"], ["2026-03-01", "삼일절"], ["2026-03-02", "삼일절 대체공휴일"], ["2026-05-05", "어린이날"], ["2026-05-24", "부처님오신날"], ["2026-05-25", "부처님오신날 대체공휴일"], ["2026-06-03", "지방선거일"], ["2026-06-06", "현충일"], ["2026-08-15", "광복절"], ["2026-08-17", "광복절 대체공휴일"], ["2026-10-03", "개천절"], ["2026-10-05", "개천절 대체공휴일"], ["2026-10-09", "한글날"], ["2026-12-25", "크리스마스"]],
@@ -129,6 +153,8 @@ function starterState() {
     routineDoneByMonth: {},
     categories: DEFAULT_CATEGORIES,
     image: null,
+    anniversaries: [],
+    showAnniversaryPanel: true,
     timerImages: { work: "", other: "", away: "" },
     selectedImageSlot: "work",
     fixedImageMode: false,
@@ -259,6 +285,49 @@ function fmtTime(sec) {  const safe = Math.max(0, Math.floor(sec || 0));
   return `${pad(Math.floor(safe / 3600))}:${pad(Math.floor((safe % 3600) / 60))}:${pad(safe % 60)}`;
 }
 
+function parseDateKey(dateKey) {
+  if (!dateKey) return null;
+  const [year, month, day] = String(dateKey).split("-").map((v) => Number(v));
+  if (!year || !month || !day) return null;
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
+function getAnniversaryInfo(item, baseKey = null) {
+  const sourceDate = parseDateKey(item?.date);
+  if (!sourceDate) return null;
+
+  const base = baseKey ? parseDateKey(baseKey) : new Date();
+  const today = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+  const origin = new Date(sourceDate.getFullYear(), sourceDate.getMonth(), sourceDate.getDate());
+  const diff = Math.round((today.getTime() - origin.getTime()) / 86400000);
+  const abs = Math.abs(diff);
+
+  return {
+    ...item,
+    targetKey: makeDate(origin.getFullYear(), origin.getMonth() + 1, origin.getDate()),
+    dateDisplay: `${origin.getFullYear()}/${pad(origin.getMonth() + 1)}/${pad(origin.getDate())}`,
+    diff,
+    label: diff === 0 ? "D-DAY" : diff > 0 ? `D+${abs}` : `D-${abs}`,
+  };
+}
+
+function addYearsSafe(dateKey, amount) {
+  const base = parseDateKey(dateKey);
+  if (!base) return null;
+  const d = new Date(base);
+  d.setFullYear(base.getFullYear() + amount);
+  if (d.getMonth() !== base.getMonth() || d.getDate() !== base.getDate()) return null;
+  return makeDate(d.getFullYear(), d.getMonth() + 1, d.getDate());
+}
+
+function pushAnniversaryMark(map, key, mark) {
+  if (!key) return;
+  if (!map.has(key)) map.set(key, []);
+  map.get(key).push(mark);
+}
+
 function repeatCopies(event, year, month) {
   if (!event.repeatRule || event.repeatRule === "none") return [];
   const excluded = Array.isArray(event.excludedDates) ? event.excludedDates : [];
@@ -279,7 +348,36 @@ function repeatCopies(event, year, month) {
   return list;
 }
 
+
+function getEventContinuousKey(ev) {
+  if (!ev || ev.isRoutine || ev.isHoliday) return "";
+  const groupId = ev.repeatGroupId || ev.cloneGroupId || ev.baseRepeatId || ev.baseEventId || "";
+  const contentKey = [
+    String(ev.title || "").trim(),
+    String(ev.startTime || "").trim(),
+    String(ev.categoryId || "").trim(),
+    String(ev.memo || "").trim(),
+    String(ev.url || "").trim(),
+  ].join("||");
+  // Same repeated/cloned group should only merge visually while its visible contents still match.
+  // If one middle date is edited, contentKey changes and it splits out as its own card.
+  return groupId ? `group:${groupId}::${contentKey}` : `content:${contentKey}`;
+}
+
+function isNextDateKey(a, b) {
+  return addDays(a, 1) === b;
+}
+
 function sortEvent(a, b) {
+  const al = Number.isFinite(Number(a._displayLane)) ? Number(a._displayLane) : null;
+  const bl = Number.isFinite(Number(b._displayLane)) ? Number(b._displayLane) : null;
+  if (al !== null || bl !== null) {
+    if (al === null) return 1;
+    if (bl === null) return -1;
+    if (al !== bl) return al - bl;
+  }
+  if (a.isContinuousPlaceholder && !b.isContinuousPlaceholder) return -1;
+  if (!a.isContinuousPlaceholder && b.isContinuousPlaceholder) return 1;
   if (a.isRoutine && !b.isRoutine) return -1;
   if (!a.isRoutine && b.isRoutine) return 1;
   const ao = Number.isFinite(Number(a.sortOrder)) ? Number(a.sortOrder) : 9999;
@@ -310,10 +408,13 @@ export default function App() {
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [categoryDrafts, setCategoryDrafts] = useState([]);
   const [imageOpen, setImageOpen] = useState(false);
+  const [anniversaryOpen, setAnniversaryOpen] = useState(false);
+  const [anniversaryDrafts, setAnniversaryDrafts] = useState([]);
   const [todoAddTarget, setTodoAddTarget] = useState(null);
   const [editingTodo, setEditingTodo] = useState(null);
   const [todoDraft, setTodoDraft] = useState({ text: "", day: 1 });
   const [todoDrafts, setTodoDrafts] = useState([]);
+  const todayTodoCleanupRef = useRef(false);
   const [historyStack, setHistoryStack] = useState([]);
   const [dragging, setDragging] = useState(null);
   const [hoverDate, setHoverDate] = useState(null);
@@ -329,7 +430,6 @@ export default function App() {
   const [updateStatus, setUpdateStatus] = useState("업데이트 미확인");
   const [backupFiles, setBackupFiles] = useState([]);
   const [backupOpen, setBackupOpen] = useState(false);
-  const [backupStatus, setBackupStatus] = useState("자동 백업 활성화됨");
   const [activeProgramDebug, setActiveProgramDebug] = useState("");
   const imageRef = useRef(null);
   const idleRef = useRef(Date.now());
@@ -353,7 +453,19 @@ export default function App() {
     }, 250);
 
     return () => window.clearTimeout(timer);
-  }, [state.events, state.todos, state.routineDoneByMonth, state.categories, state.image, state.timerImages, state.selectedImageSlot, state.fixedImageMode, state.showJapanHolidays, state.showFixedList, state.showTodayList, state.showTimerBar, state.searchText, state.filterCategoryId, state.year, state.month]);
+  }, [state.events, state.todos, state.routineDoneByMonth, state.categories, state.image, state.anniversaries, state.showAnniversaryPanel, state.timerImages, state.selectedImageSlot, state.fixedImageMode, state.showJapanHolidays, state.showFixedList, state.showTodayList, state.showTimerBar, state.searchText, state.filterCategoryId, state.year, state.month]);
+
+  useEffect(() => {
+    if (todayTodoCleanupRef.current) return;
+    todayTodoCleanupRef.current = true;
+
+    setState((s) => {
+      const todos = Array.isArray(s.todos) ? s.todos : [];
+      const cleanedTodos = todos.filter((todo) => Boolean(todo.fixed) || !todo.done);
+      if (cleanedTodos.length === todos.length) return s;
+      return { ...s, todos: cleanedTodos };
+    });
+  }, []);
 
   useEffect(() => {
     try {
@@ -552,6 +664,8 @@ export default function App() {
     routineDoneByMonth: state.routineDoneByMonth,
     categories: state.categories,
     image: state.image,
+    anniversaries: state.anniversaries,
+    showAnniversaryPanel: state.showAnniversaryPanel,
     timerImages: state.timerImages,
     selectedImageSlot: state.selectedImageSlot,
     fixedImageMode: state.fixedImageMode,
@@ -562,7 +676,7 @@ export default function App() {
     filterCategoryId: state.filterCategoryId,
     year: state.year,
     month: state.month,
-  }), [state.events, state.todos, state.routineDoneByMonth, state.categories, state.image, state.timerImages, state.selectedImageSlot, state.fixedImageMode, state.showJapanHolidays, state.showFixedList, state.showTodayList, state.showTimerBar, state.filterCategoryId, state.year, state.month]);
+  }), [state.events, state.todos, state.routineDoneByMonth, state.categories, state.image, state.anniversaries, state.showAnniversaryPanel, state.timerImages, state.selectedImageSlot, state.fixedImageMode, state.showJapanHolidays, state.showFixedList, state.showTodayList, state.showTimerBar, state.filterCategoryId, state.year, state.month]);
 
   useEffect(() => {
     if (!state.driveAutoSync || !driveToken) return;
@@ -687,11 +801,28 @@ ${info.message}` : "";
       setActiveProgramDebug(activeProgram || "(감지 없음)");
 
       setState((s) => {
+        const idleMs = Date.now() - idleRef.current;
+        const away = idleMs >= 15000;
         const tracked = isTrackedProgram(activeProgram, s.trackedPrograms || []);
 
-        if (tracked) return { ...s, workSeconds: s.workSeconds + 1 };
+        if (away) {
+          return {
+            ...s,
+            awaySeconds: s.awaySeconds + 1,
+          };
+        }
 
-        return { ...s, otherSeconds: s.otherSeconds + 1 };
+        if (tracked) {
+          return {
+            ...s,
+            workSeconds: s.workSeconds + 1,
+          };
+        }
+
+        return {
+          ...s,
+          otherSeconds: s.otherSeconds + 1,
+        };
       });
     }, 1000);
 
@@ -710,12 +841,18 @@ ${info.message}` : "";
     return next;
   });
 
-  const generatedEvents = useMemo(() => state.events.flatMap((ev) => repeatCopies(ev, state.year, state.month)), [state.events, state.year, state.month]);
-  const routineEvents = useMemo(() => {
-    const visibleMonths = Array.from(
+  const visibleMonths = useMemo(
+    () => Array.from(
       new Map(days.map((d) => [`${d.year}-${pad(d.month)}`, { year: d.year, month: d.month }])).values()
-    );
+    ),
+    [days]
+  );
 
+  const generatedEvents = useMemo(
+    () => visibleMonths.flatMap(({ year, month }) => state.events.flatMap((ev) => repeatCopies(ev, year, month))),
+    [state.events, visibleMonths]
+  );
+  const routineEvents = useMemo(() => {
     return visibleMonths.flatMap(({ year, month }) => {
       const monthKey = `${year}-${pad(month)}`;
       const lastDay = new Date(year, month, 0).getDate();
@@ -732,12 +869,15 @@ ${info.message}` : "";
           routineTodoId: t.id,
         }));
     });
-  }, [state.todos, state.routineDoneByMonth, days]);
+  }, [state.todos, state.routineDoneByMonth, visibleMonths]);
   const holidayEvents = useMemo(() => {
-    const kr = (KR_HOLIDAYS[state.year] || []).map(([date, title]) => ({ id: `kr-${date}`, date, title, categoryId: "kr-holiday", isHoliday: true }));
-    const jp = state.showJapanHolidays ? (JP_HOLIDAYS[state.year] || []).map(([date, title]) => ({ id: `jp-${date}`, date, title, categoryId: "holiday", isHoliday: true })) : [];
-    return [...kr, ...jp];
-  }, [state.year, state.showJapanHolidays]);
+    const visibleYears = [...new Set(days.map((d) => d.year))];
+    return visibleYears.flatMap((year) => {
+      const kr = (KR_HOLIDAYS[year] || []).map(([date, title]) => ({ id: `kr-${date}`, date, title, categoryId: "kr-holiday", isHoliday: true }));
+      const jp = state.showJapanHolidays ? (JP_HOLIDAYS[year] || []).map(([date, title]) => ({ id: `jp-${date}`, date, title, categoryId: "holiday", isHoliday: true })) : [];
+      return [...kr, ...jp];
+    });
+  }, [days, state.showJapanHolidays]);
 
   const scheduleEvents = useMemo(() => [...state.events, ...generatedEvents, ...routineEvents], [state.events, generatedEvents, routineEvents]);
   const allEvents = useMemo(() => [...scheduleEvents, ...holidayEvents], [scheduleEvents, holidayEvents]);
@@ -760,13 +900,155 @@ ${info.message}` : "";
   }, [allEvents, state.searchText, state.filterCategoryId, state.categories]);
   const byDate = useMemo(() => {
     const map = new Map();
-    visibleEvents.filter((ev) => !ev.isHoliday).forEach((ev) => {
-      if (!map.has(ev.date)) map.set(ev.date, []);
-      map.get(ev.date).push(ev);
+    const occupied = new Map();
+    const visibleDateKeys = new Set(days.map((d) => d.key));
+    const dayMeta = new Map(days.map((d) => [d.key, d]));
+    const normalEvents = visibleEvents.filter((ev) => !ev.isHoliday);
+    const grouped = new Map();
+    const consumedIds = new Set();
+
+    const getOccupied = (date) => {
+      if (!occupied.has(date)) occupied.set(date, new Set());
+      return occupied.get(date);
+    };
+
+    const reserveLane = (dates) => {
+      let lane = 0;
+      while (dates.some((date) => getOccupied(date).has(lane))) lane += 1;
+      dates.forEach((date) => getOccupied(date).add(lane));
+      return lane;
+    };
+
+    const pushDisplay = (date, item) => {
+      if (!map.has(date)) map.set(date, []);
+      map.get(date).push(item);
+    };
+
+    normalEvents.forEach((ev) => {
+      const key = getEventContinuousKey(ev);
+      if (!key) return;
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(ev);
     });
+
+    grouped.forEach((list) => {
+      const sorted = [...list]
+        .filter((ev) => ev.date && visibleDateKeys.has(ev.date))
+        .sort((a, b) => a.date.localeCompare(b.date) || sortEvent(a, b));
+
+      let i = 0;
+      while (i < sorted.length) {
+        const segment = [sorted[i]];
+        let j = i + 1;
+
+        while (j < sorted.length && isNextDateKey(segment[segment.length - 1].date, sorted[j].date)) {
+          segment.push(sorted[j]);
+          j += 1;
+        }
+
+        if (segment.length >= 2) {
+          let cursor = 0;
+
+          while (cursor < segment.length) {
+            const chunkStart = segment[cursor];
+            const startMeta = dayMeta.get(chunkStart.date);
+            const roomInWeek = startMeta ? 7 - startMeta.dow : 1;
+            const chunkLength = Math.min(roomInWeek, segment.length - cursor);
+            const chunkEvents = segment.slice(cursor, cursor + chunkLength);
+            const chunkDates = chunkEvents.map((item) => item.date);
+            const chunkEnd = chunkEvents[chunkEvents.length - 1];
+            const lane = reserveLane(chunkDates);
+
+            const displayEvent = {
+              ...chunkStart,
+              _displayLane: lane,
+              continuousSpan: chunkLength,
+              continuesFromPrev: cursor > 0,
+              continuesNext: cursor + chunkLength < segment.length,
+              continuousDisplayTitle: chunkStart.title,
+              continuousEndDate: chunkEnd.date,
+              continuousItems: chunkEvents.map((item) => ({
+                id: item.id,
+                date: item.date,
+                title: item.title,
+                startTime: item.startTime,
+                categoryId: item.categoryId,
+                memo: item.memo,
+                url: item.url,
+                repeatRule: item.repeatRule,
+                repeatUntil: item.repeatUntil,
+                repeatGroupId: item.repeatGroupId,
+                cloneGroupId: item.cloneGroupId,
+                baseRepeatId: item.baseRepeatId,
+                baseEventId: item.baseEventId,
+                isGenerated: item.isGenerated,
+              })),
+            };
+
+            pushDisplay(chunkStart.date, displayEvent);
+
+            chunkEvents.slice(1).forEach((item) => {
+              pushDisplay(item.date, {
+                id: `placeholder-${displayEvent.id || chunkStart.id}-${item.date}-${lane}`,
+                date: item.date,
+                _displayLane: lane,
+                isContinuousPlaceholder: true,
+                isContinuousHitbox: true,
+                continuousTarget: item,
+                continuousItems: chunkEvents.map((entry) => ({
+                  id: entry.id,
+                  date: entry.date,
+                  title: entry.title,
+                  startTime: entry.startTime,
+                  categoryId: entry.categoryId,
+                  memo: entry.memo,
+                  url: entry.url,
+                  repeatRule: entry.repeatRule,
+                  repeatUntil: entry.repeatUntil,
+                  repeatGroupId: entry.repeatGroupId,
+                  cloneGroupId: entry.cloneGroupId,
+                  baseRepeatId: entry.baseRepeatId,
+                  baseEventId: entry.baseEventId,
+                  isGenerated: entry.isGenerated,
+                })),
+              });
+            });
+
+            chunkEvents.forEach((ev) => consumedIds.add(ev.id));
+            cursor += chunkLength;
+          }
+        }
+
+        i = j;
+      }
+    });
+
+    normalEvents.forEach((ev) => {
+      if (consumedIds.has(ev.id)) return;
+      const lane = reserveLane([ev.date]);
+      pushDisplay(ev.date, { ...ev, _displayLane: lane });
+    });
+
+    for (const date of visibleDateKeys) {
+      const lanes = occupied.get(date);
+      if (!lanes || lanes.size === 0) continue;
+      const maxLane = Math.max(...lanes);
+      const existing = new Set((map.get(date) || []).map((item) => item._displayLane).filter((lane) => Number.isFinite(Number(lane))));
+      for (let lane = 0; lane <= maxLane; lane += 1) {
+        if (!existing.has(lane)) {
+          pushDisplay(date, {
+            id: `lane-spacer-${date}-${lane}`,
+            date,
+            _displayLane: lane,
+            isContinuousPlaceholder: true,
+          });
+        }
+      }
+    }
+
     for (const [date, list] of map.entries()) map.set(date, [...list].sort(sortEvent));
     return map;
-  }, [visibleEvents]);
+  }, [visibleEvents, days]);
 
   function goMonth(delta) {
     setState((s) => {
@@ -784,7 +1066,25 @@ ${info.message}` : "";
     if (ev.isRoutine || ev.isHoliday) return;
     setSelectedDate(ev.date);
     setEditingEvent(ev.id);
-    setDraft({ title: ev.title || "", startTime: ev.startTime || "", categoryId: ev.categoryId || "etc", memo: ev.memo || "", url: ev.url || "", repeatRule: ev.repeatRule || "none", repeatUntil: ev.repeatUntil || "", rangeStart: ev.date || "", rangeEnd: "" });
+    setDraft({
+      title: ev.title || "",
+      startTime: ev.startTime || "",
+      categoryId: ev.categoryId || "etc",
+      memo: ev.memo || "",
+      url: ev.url || "",
+      repeatRule: ev.repeatRule || "none",
+      repeatUntil: ev.repeatUntil || "",
+      rangeStart: ev.date || "",
+      rangeEnd: "",
+      _editTargetId: ev.id,
+      _editTargetDate: ev.date,
+      _editTargetBaseEventId: ev.baseEventId || "",
+      _editTargetBaseRepeatId: ev.baseRepeatId || "",
+      _editTargetRepeatGroupId: ev.repeatGroupId || "",
+      _editTargetCloneGroupId: ev.cloneGroupId || "",
+      _editTargetIsGenerated: Boolean(ev.isGenerated),
+      _editTargetSortOrder: ev.sortOrder || 0,
+    });
   }
   function getRepeatRootId(target) {
     if (!target) return null;
@@ -838,12 +1138,92 @@ ${info.message}` : "";
     };
 
     if (editingEvent) {
-      const target = allEvents.find((e) => e.id === editingEvent);
-      if (target?.isGenerated && target.baseEventId) {
-        setState((s) => ({ ...s, events: [...s.events.map((e) => e.id === target.baseEventId ? { ...e, excludedDates: [...new Set([...(e.excludedDates || []), target.date])] } : e), { id: uid(), date: target.date, sortOrder: target.sortOrder || 0, ...cleanDraft, repeatRule: "none", repeatUntil: "" }] }));
-      } else {
-        setState((s) => ({ ...s, events: s.events.map((e) => e.id === editingEvent ? { ...e, ...cleanDraft } : e) }));
-      }
+      const target = allEvents.find((e) => e.id === editingEvent) || {
+        id: editingEvent,
+        date: draft._editTargetDate || selectedDate,
+        baseEventId: draft._editTargetBaseEventId || "",
+        baseRepeatId: draft._editTargetBaseRepeatId || "",
+        repeatGroupId: draft._editTargetRepeatGroupId || "",
+        cloneGroupId: draft._editTargetCloneGroupId || "",
+        isGenerated: Boolean(draft._editTargetIsGenerated),
+        sortOrder: draft._editTargetSortOrder || 0,
+      };
+
+      const editDate = target.date || draft._editTargetDate || selectedDate;
+      const targetGroupIds = [
+        target.repeatGroupId,
+        target.cloneGroupId,
+        target.baseRepeatId,
+        target.baseEventId,
+        draft._editTargetRepeatGroupId,
+        draft._editTargetCloneGroupId,
+        draft._editTargetBaseRepeatId,
+        draft._editTargetBaseEventId,
+      ].filter(Boolean);
+
+      const isSameEditTarget = (event) => {
+        if (!event) return false;
+        if (event.id === editingEvent) return true;
+        if (event.date !== editDate) return false;
+        return targetGroupIds.some((groupId) =>
+          event.repeatGroupId === groupId ||
+          event.cloneGroupId === groupId ||
+          event.baseRepeatId === groupId ||
+          event.baseEventId === groupId ||
+          event.id === groupId
+        );
+      };
+
+      setState((s) => {
+        let didUpdate = false;
+        let didExcludeBase = false;
+
+        const nextEvents = s.events.map((event) => {
+          const shouldExcludeGenerated =
+            target?.isGenerated &&
+            target.baseEventId &&
+            event.id === target.baseEventId;
+
+          if (shouldExcludeGenerated) {
+            didExcludeBase = true;
+            return {
+              ...event,
+              excludedDates: [...new Set([...(event.excludedDates || []), editDate])],
+            };
+          }
+
+          if (isSameEditTarget(event)) {
+            didUpdate = true;
+            return {
+              ...event,
+              ...cleanDraft,
+              date: editDate,
+              repeatRule: "none",
+              repeatUntil: "",
+              repeatGroupId: undefined,
+              cloneGroupId: undefined,
+              baseRepeatId: undefined,
+              baseEventId: undefined,
+              isGenerated: false,
+            };
+          }
+
+          return event;
+        });
+
+        if (!didUpdate) {
+          nextEvents.push({
+            id: uid(),
+            date: editDate,
+            sortOrder: target.sortOrder || draft._editTargetSortOrder || 0,
+            ...cleanDraft,
+            repeatRule: "none",
+            repeatUntil: "",
+          });
+        }
+
+        return { ...s, events: nextEvents };
+      });
     } else {
       const rangedEvents = draft.rangeMode ? buildRangeEvents(selectedDate, draft) : null;
       if (rangedEvents) {
@@ -857,7 +1237,12 @@ ${info.message}` : "";
   function deleteEvent() {
     if (!editingEvent) return;
     pushHistory();
-    const target = allEvents.find((e) => e.id === editingEvent);
+    const target = allEvents.find((e) => e.id === editingEvent) || {
+      id: editingEvent,
+      date: draft._editTargetDate || selectedDate,
+      baseEventId: draft._editTargetBaseEventId || "",
+      isGenerated: Boolean(draft._editTargetIsGenerated),
+    };
     if (target?.isGenerated && target.baseEventId) {
       setState((s) => ({ ...s, events: s.events.map((e) => e.id === target.baseEventId ? { ...e, excludedDates: [...new Set([...(e.excludedDates || []), target.date])] } : e) }));
     } else setState((s) => ({ ...s, events: s.events.filter((e) => e.id !== editingEvent) }));
@@ -915,13 +1300,43 @@ ${info.message}` : "";
       const sourceId = ev.baseEventId && ev.isGenerated ? ev.baseEventId : ev.id;
       const source = s.events.find((e) => e.id === sourceId) || ev;
       const groupRoot = source.cloneGroupId || source.baseRepeatId || source.repeatGroupId || source.id;
+      const isGeneratedMove = Boolean(ev.isGenerated && ev.baseEventId && !clone);
+
       const moved = clone || ev.isGenerated
-        ? { ...ev, id: uid(), date, isGenerated: false, baseEventId: undefined, baseRepeatId: ev.baseRepeatId || source.baseRepeatId, repeatGroupId: ev.repeatGroupId || source.repeatGroupId, cloneGroupId: groupRoot, excludedDates: undefined, repeatRule: clone ? "none" : (ev.isGenerated ? "none" : (ev.repeatRule || "none")) }
+        ? {
+            ...ev,
+            id: uid(),
+            date,
+            isGenerated: false,
+            baseEventId: undefined,
+            baseRepeatId: undefined,
+            repeatGroupId: undefined,
+            cloneGroupId: clone ? groupRoot : undefined,
+            excludedDates: undefined,
+            repeatRule: "none",
+            repeatUntil: "",
+          }
         : { ...source, date };
-      let nextEvents = clone || ev.isGenerated ? [...s.events, moved] : s.events.map((e) => e.id === sourceId ? moved : e);
+
+      let nextEvents;
+
+      if (isGeneratedMove) {
+        nextEvents = [
+          ...s.events.map((e) =>
+            e.id === sourceId
+              ? { ...e, excludedDates: [...new Set([...(e.excludedDates || []), ev.date])] }
+              : e
+          ),
+          moved,
+        ];
+      } else {
+        nextEvents = clone || ev.isGenerated ? [...s.events, moved] : s.events.map((e) => e.id === sourceId ? moved : e);
+      }
+
       if (clone && !source.cloneGroupId) {
         nextEvents = nextEvents.map((e) => e.id === sourceId ? { ...e, cloneGroupId: groupRoot } : e);
       }
+
       const sameDate = nextEvents.filter((e) => e.date === date && !e.isHoliday && !e.isRoutine && e.id !== moved.id).sort(sortEvent);
       const insertAt = beforeId ? Math.max(0, sameDate.findIndex((e) => e.id === beforeId || `gen-${e.id}-${date}` === beforeId)) : sameDate.length;
       const ordered = [...sameDate];
@@ -1020,6 +1435,27 @@ ${info.message}` : "";
   }
   function openCategoryEditor() { setCategoryDrafts(state.categories.map((c) => ({ ...c }))); setCategoryOpen(true); }
   function saveCategories() { setState((s) => ({ ...s, categories: categoryDrafts.length ? categoryDrafts.map((c) => ({ ...c, label: c.label.trim() || "무제" })) : DEFAULT_CATEGORIES })); setCategoryOpen(false); }
+  function openAnniversaryEditor() {
+    const drafts = Array.isArray(state.anniversaries) ? state.anniversaries : [];
+    setAnniversaryDrafts(drafts.length ? drafts.map((item) => ({ colorId: "cream", customColor: "", ...item })) : [{ id: uid(), title: "", date: "", image: "", colorId: "cream" }]);
+    setAnniversaryOpen(true);
+  }
+  function saveAnniversaries() {
+    const cleaned = anniversaryDrafts
+      .map((item, index) => ({
+        id: item.id || uid(),
+        title: String(item.title || "").trim(),
+        date: item.date || "",
+        image: item.image || "",
+        colorId: item.colorId || "cream",
+        customColor: item.customColor || "",
+        sortOrder: index,
+      }))
+      .filter((item) => item.title || item.date || item.image);
+
+    setState((s) => ({ ...s, anniversaries: cleaned }));
+    setAnniversaryOpen(false);
+  }
   async function openBackupManager() {
     try {
       const api = window.electron || window.xlBackupApi;
@@ -1064,10 +1500,75 @@ ${info.message}` : "";
     }
   }
 
+  const anniversaryItems = useMemo(() => {
+    return (Array.isArray(state.anniversaries) ? state.anniversaries : [])
+      .map((item, index) => ({ ...item, sortOrder: Number.isFinite(Number(item.sortOrder)) ? Number(item.sortOrder) : index }))
+      .map((item) => getAnniversaryInfo(item, todayKey))
+      .filter(Boolean)
+      .sort((a, b) => {
+        const ao = Number.isFinite(Number(a.sortOrder)) ? Number(a.sortOrder) : 9999;
+        const bo = Number.isFinite(Number(b.sortOrder)) ? Number(b.sortOrder) : 9999;
+        if (ao !== bo) return ao - bo;
+        return String(a.title || "").localeCompare(String(b.title || ""));
+      });
+  }, [state.anniversaries, todayKey]);
+
+  const anniversaryMarksByDate = useMemo(() => {
+    const map = new Map();
+    if (!days.length) return map;
+
+    const startKey = days[0].key;
+    const endKey = days[days.length - 1].key;
+    const source = Array.isArray(state.anniversaries) ? state.anniversaries : [];
+
+    source.forEach((raw) => {
+      const info = getAnniversaryInfo(raw, todayKey);
+      if (!info?.targetKey) return;
+      const palette = getAnniversaryPalette(info);
+      const baseTitle = info.title || "기념일";
+
+      for (let n = 1; n <= 200; n += 1) {
+        const dayCount = n * 100;
+        const key = addDays(info.targetKey, dayCount);
+        if (key > endKey) break;
+        if (key >= startKey) {
+          pushAnniversaryMark(map, key, {
+            id: `${info.id || baseTitle}-${dayCount}`,
+            title: `${baseTitle} · ${dayCount}일`,
+            color: palette.heart || palette.tape || "#e7a3b2",
+          });
+        }
+      }
+
+      for (let year = 1; year <= 80; year += 1) {
+        const key = addYearsSafe(info.targetKey, year);
+        if (!key) continue;
+        if (key > endKey) break;
+        if (key >= startKey) {
+          pushAnniversaryMark(map, key, {
+            id: `${info.id || baseTitle}-${year}y`,
+            title: `${baseTitle} · ${year}주년`,
+            color: palette.heart || palette.tape || "#e7a3b2",
+          });
+        }
+      }
+    });
+
+    return map;
+  }, [state.anniversaries, days, todayKey]);
+
   const activeProgramName = activeProgramDebug;
-  const isAwayNow = Date.now() - idleRef.current >= 30000;
+  const idleMsNow = Date.now() - idleRef.current;
+  const isAwayNow = idleMsNow >= 15000;
   const isTrackedNow = isTrackedProgram(activeProgramName, state.trackedPrograms || []);
-  const activeImageSlot = state.fixedImageMode ? state.selectedImageSlot : isTrackedNow ? "work" : isAwayNow ? "away" : "other";
+
+  const activeImageSlot = state.fixedImageMode
+    ? state.selectedImageSlot
+    : isAwayNow
+      ? "away"
+      : isTrackedNow
+        ? "work"
+        : "other";
   const activeImage = state.timerImages?.[activeImageSlot] || state.image;
   const totalFocus = Math.max(1, state.workSeconds + state.otherSeconds);
   const focusRatio = Math.round((state.workSeconds / totalFocus) * 100);
@@ -1080,6 +1581,7 @@ ${info.message}` : "";
         days={days}
         byDate={byDate}
         holidayMeta={holidayMeta}
+        anniversaryMarksByDate={anniversaryMarksByDate}
         cat={cat}
         goMonth={goMonth}
         openNew={openNew}
@@ -1094,7 +1596,7 @@ ${info.message}` : "";
         onOpenSettings={() => setMobileDriveSettingsOpen(true)}
       />
       <div className="relative mx-auto hidden h-screen min-h-[760px] w-full max-w-none overflow-visible rounded-[12px] border border-[#d2d2d2] bg-white shadow-[0_10px_34px_rgba(0,0,0,0.055)] md:flex">
-        <aside className="w-[clamp(260px,19vw,312px)] shrink-0 overflow-hidden rounded-l-[12px] border-r border-[#e7e7e7] bg-[#fbfbfb] px-[clamp(20px,2vw,34px)] py-[clamp(24px,3vh,40px)] pb-[32px]">
+        <aside className="flex w-[clamp(260px,19vw,312px)] shrink-0 flex-col overflow-hidden rounded-l-[12px] border-r border-[#e7e7e7] bg-[#fbfbfb] px-[clamp(20px,2vw,34px)] py-[clamp(24px,3vh,40px)] pb-[40px]">
           <div
             className="flex items-center justify-center gap-[12px] text-[31px] tracking-[3px] text-[#172536]"
             style={{
@@ -1111,9 +1613,9 @@ ${info.message}` : "";
                 style={{
                   fontFamily: '"SF Pro Rounded","Pretendard","Apple SD Gothic Neo",sans-serif',
                 }}>&gt;</button></div>
-          <div className="mx-auto mt-[19px] h-[4px] w-[132px] rounded-full bg-[#d4d4d4]" />
-          <div className="group relative mt-[23px] flex w-full items-start justify-center overflow-visible rounded-[7px]">
-            {activeImage ? <img src={activeImage} alt="calendar" className="block h-auto w-full rounded-[7px] object-contain" /> : <button onClick={() => setImageOpen(true)} className="flex h-[149px] w-full items-center justify-center rounded-[7px] text-[15px] font-bold text-[#999]">이미지 추가</button>}
+          <div className="mx-auto mt-[19px] mb-[23px] block h-[4px] w-[132px] shrink-0 rounded-full bg-[#d4d4d4]" />
+          <div className="group relative flex w-full items-center justify-center overflow-visible rounded-[10px]">
+            {activeImage ? <img src={activeImage} alt="calendar" className="block h-auto w-full rounded-[10px] object-contain" /> : <button onClick={() => setImageOpen(true)} className="flex h-[149px] w-full items-center justify-center rounded-[10px] text-[15px] font-bold text-[#999]">이미지 추가</button>}
             <div className="absolute right-[9px] top-[9px] flex gap-[6px] opacity-0 transition-opacity duration-150 group-hover:opacity-100">
               {activeImage && <button onClick={(e) => { e.stopPropagation(); setState((s) => ({ ...s, image: "", timerImages: { work: "", other: "", away: "" } })); }} className="flex h-[34px] w-[34px] items-center justify-center rounded-full bg-white/85 text-[15px] font-black text-[#c88a96] shadow-[0_8px_17px_rgba(0,0,0,0.12)] hover:bg-white">×</button>}
               <button onClick={() => setImageOpen(true)} className="flex h-[34px] w-[34px] items-center justify-center rounded-full bg-white/85 shadow-[0_8px_17px_rgba(0,0,0,0.12)] hover:bg-white"><MousePointer2 size={12} fill="#111" /></button>
@@ -1121,8 +1623,9 @@ ${info.message}` : "";
             <input ref={imageRef} type="file" accept="image/*" className="hidden" onChange={(e) => { loadImage(e.target.files?.[0], state.selectedImageSlot); e.currentTarget.value = ""; }} />
           </div>
           {state.showFixedList && <Section title="MY LIST · 고정" onAdd={() => openTodoAdd(true)}>{state.todos.filter((t) => t.fixed).map((t) => <Todo key={t.id} todo={t} routineMonthKey={routineMonthKey} routineDoneByMonth={state.routineDoneByMonth} onToggle={toggleTodo} onEdit={openTodoEdit} />)}</Section>}
-          {state.showTodayList && <Section title="MY LIST · 오늘" onAdd={() => openTodoAdd(false)}>{state.todos.filter((t) => !t.fixed).length ? state.todos.filter((t) => !t.fixed).map((t) => <Todo key={t.id} todo={t} onToggle={toggleTodo} onEdit={openTodoEdit} />) : <div className="mt-[18px] px-[6px] text-center text-[11px] leading-[1.3] tracking-[-0.01em] text-[#b1b1b1]">오늘 할 일을 메모해 보세요.</div>}</Section>}
+          {state.showTodayList && <Section title="MY LIST · 해야 할 일" onAdd={() => openTodoAdd(false)}>{state.todos.filter((t) => !t.fixed).length ? state.todos.filter((t) => !t.fixed).map((t) => <Todo key={t.id} todo={t} onToggle={toggleTodo} onEdit={openTodoEdit} />) : <div className="mt-[18px] px-[6px] text-center text-[11px] leading-[1.3] tracking-[-0.01em] text-[#b1b1b1]">오늘 할 일을 메모해 보세요.</div>}</Section>}
           <Section title="CATEGORY" noTop onAdd={openCategoryEditor}><div className="mt-[19px] space-y-[12px]">{state.categories.map((c) => <div key={c.id} className="flex w-full items-center justify-between text-[14px] font-[600] tracking-[0em]"><span className="flex items-center gap-[12px]"><span className="h-[16px] w-[16px] rounded-full" style={{ background: c.color }} />{c.label}</span><span className="text-[11px] font-semibold tracking-[-0.018em] text-[#aaa19c]">{scheduleEvents.filter((e) => e.categoryId === c.id && e.date.startsWith(`${state.year}-${pad(state.month)}`)).length}</span></div>)}</div></Section>
+          {state.showAnniversaryPanel && <AnniversaryPanel items={anniversaryItems} onEdit={openAnniversaryEditor} />}
         </aside>
 
         <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-r-[12px] bg-white pl-[clamp(2px,0.8vw,14px)] pr-[52px] pt-0">
@@ -1131,10 +1634,22 @@ ${info.message}` : "";
             <div className="flex items-center gap-2 pr-[10px]" style={{ WebkitAppRegion: "no-drag" }}><button onClick={() => setGuideOpen(true)} className="rounded-full border border-[#e6e6e6] bg-white px-[12px] py-[5px] text-[11px] font-[600] tracking-[0.02em] text-[#777] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition hover:bg-[#f7f7f7]">GUIDE</button><button onClick={() => setSettingsOpen(true)} className="flex items-center gap-[5px] rounded-full border border-[#e6e6e6] bg-white px-[12px] py-[5px] text-[11px] font-[600] tracking-[-0.01em] text-[#777] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition hover:bg-[#f7f7f7]"><Settings size={13} />설정</button><WindowControls /></div>
           </div>
           <div className="mx-auto flex min-h-0 flex-1 flex-col w-full max-w-none"><div className="grid h-[28px] grid-cols-7 items-center text-center text-[14px] font-[600] tracking-[0em] text-[#555555]"><span className="text-[#FF8DA1]">일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span className="text-[#7EA6FF]">토</span></div>
-            <div className="grid flex-1 auto-rows-fr grid-cols-7 overflow-hidden rounded-[8px] border border-[#ececec] bg-[#fcfcfc] min-h-0">{days.map((d) => <DayCell key={d.key} d={d} events={byDate.get(d.key) || []} holidayMeta={holidayMeta.get(d.key)} cat={cat} hoverDate={hoverDate} todayKey={todayKey} dragging={dragging} setDragging={setDragging} setHoverDate={setHoverDate} setCopyMode={setCopyMode} copyMode={copyMode} openNew={openNew} openEdit={openEdit} moveEvent={moveEvent} setState={setState} routineMonthKey={routineMonthKey} />)}</div>
+            <div className="grid flex-1 auto-rows-fr grid-cols-7 overflow-hidden rounded-[8px] border border-[#ececec] bg-[#fcfcfc] min-h-0">{days.map((d) => <DayCell key={d.key} d={d} events={byDate.get(d.key) || []} holidayMeta={holidayMeta.get(d.key)} anniversaryMarks={anniversaryMarksByDate.get(d.key) || []} cat={cat} hoverDate={hoverDate} todayKey={todayKey} dragging={dragging} setDragging={setDragging} setHoverDate={setHoverDate} setCopyMode={setCopyMode} copyMode={copyMode} openNew={openNew} openEdit={openEdit} moveEvent={moveEvent} setState={setState} routineMonthKey={routineMonthKey} />)}</div>
           </div>
           <MonthTabs state={state} setState={setState} jumpMonth={jumpMonth} />
           {state.showTimerBar && <TimerBar state={state} setState={setState} focusRatio={focusRatio} />}
+
+          <button
+            type="button"
+            onClick={() => window.open("https://x.com/murmurxl", "_blank", "noopener,noreferrer")}
+            className="absolute bottom-[10px] right-[18px] z-[3] select-none text-[10px] tracking-[0.08em] text-[#cfcac5] transition hover:text-[#aaa39d]"
+            style={{
+              fontFamily: '"SF Pro Display","Avenir Next","Pretendard",sans-serif',
+              letterSpacing: "0.09em",
+            }}
+          >
+            — XL Calendar
+          </button>
         </main>
       </div>
 
@@ -1142,6 +1657,7 @@ ${info.message}` : "";
       {guideOpen && <GuideModal onClose={() => setGuideOpen(false)} />}
       {settingsOpen && <SettingsModal state={state} setState={setState} driveStatus={driveStatus} driveConnected={Boolean(driveToken)} updateStatus={updateStatus} onDriveConnect={connectGoogleDrive} onDriveSave={() => saveToGoogleDrive(state)} onDriveLoad={loadFromGoogleDrive} onCheckUpdate={() => checkForUpdate()} onBackup={openBackupManager} activeProgramDebug={activeProgramDebug} onClose={() => setSettingsOpen(false)} />}
       {categoryOpen && <CategoryModal drafts={categoryDrafts} setDrafts={setCategoryDrafts} onClose={() => setCategoryOpen(false)} onSave={saveCategories} />}
+      {anniversaryOpen && <AnniversaryModal drafts={anniversaryDrafts} setDrafts={setAnniversaryDrafts} onClose={() => setAnniversaryOpen(false)} onSave={saveAnniversaries} />}
       {imageOpen && <ImageModal state={state} setState={setState} imageRef={imageRef} onClose={() => setImageOpen(false)} />}
       {mobileDriveSettingsOpen && (
         <div style={{ zIndex: 100001 }} className="fixed inset-0 flex items-end justify-center bg-black/35 p-3 md:hidden">
@@ -1277,6 +1793,7 @@ function MobileCalendar({
   days,
   byDate,
   holidayMeta,
+  anniversaryMarksByDate,
   cat,
   goMonth,
   openNew,
@@ -1394,12 +1911,14 @@ function MobileCalendar({
           const key = d.key;
           const events = byDate.get(key) || [];
           const meta = holidayMeta.get(key);
+          const anniversaryMarks = anniversaryMarksByDate?.get(key) || [];
           const holidayTitle = meta
             ? [
                 ...(meta.kr || []).map((name) => `🇰🇷 ${name}`),
                 ...(meta.jp || []).map((name) => `🇯🇵 ${name}`),
               ].join("\n")
             : "";
+          const anniversaryTitle = anniversaryMarks.map((mark) => mark.title).join("\n");
           const isActive = key === activeDate;
 
           return (
@@ -1412,9 +1931,18 @@ function MobileCalendar({
                 isActive && "bg-[#fff7f8] ring-2 ring-[#ffdfe6] ring-inset"
               )}
             >
-              <div className="flex items-center gap-[3px]">
+              <div className="flex items-center gap-[3px]" title={[holidayTitle, anniversaryTitle].filter(Boolean).join("\n") || undefined}>
                 <div className={`text-[12px] font-[600] ${!d.current ? "text-[#c9cfd3]" : meta?.kr?.length ? "text-[#FF8DA1]" : meta?.jp?.length ? "text-[#7EA6FF]" : d.dow === 0 ? "text-[#FF8DA1]" : d.dow === 6 ? "text-[#7EA6FF]" : "text-[#222]"}`}>{d.day}</div>
                 {meta?.kr?.length ? <span className="h-[5px] w-[5px] rounded-full bg-[#FFB6C3]" /> : meta?.jp?.length ? <span className="h-[5px] w-[5px] rounded-full bg-[#9AB9FF]" /> : null}
+                {anniversaryMarks.slice(0, 2).map((mark, index) => (
+                  <span
+                    key={mark.id || `${mark.title}-${index}`}
+                    className="text-[8px] font-black leading-none drop-shadow-[0_1px_0_rgba(255,255,255,0.88)]"
+                    style={{ color: mark.color || "#e7a3b2" }}
+                  >
+                    ♥
+                  </span>
+                ))}
               </div>
 
               <div className="mt-[3px] space-y-[2px]">
@@ -1498,7 +2026,7 @@ function MobileCalendar({
             <button
               type="button"
               onClick={onOpenSettings}
-              className="grid h-[24px] w-[24px] shrink-0 place-items-center rounded-full border border-[#e2e7ef] bg-white text-[12px] text-[#7d8aa0] shadow-[0_2px_6px_rgba(0,0,0,0.04)]"
+              className="grid h-[24px] w-[24px] shrink-0 place-items-start rounded-full border border-[#e2e7ef] bg-white text-[12px] text-[#7d8aa0] shadow-[0_2px_6px_rgba(0,0,0,0.04)]"
               aria-label="Google Drive 설정"
             >
               ⚙
@@ -1516,31 +2044,74 @@ function MobileCalendar({
 }
 
 
-function DayCell({ d, events, holidayMeta, cat, hoverDate, todayKey, dragging, setDragging, setHoverDate, setCopyMode, copyMode, openNew, openEdit, moveEvent, setState, routineMonthKey }) {
+function DayCell({ d, events, holidayMeta, anniversaryMarks = [], cat, hoverDate, todayKey, dragging, setDragging, setHoverDate, setCopyMode, copyMode, openNew, openEdit, moveEvent, setState, routineMonthKey }) {
   const holidayTitle = holidayMeta
     ? [
         ...(holidayMeta.kr || []).map((name) => `🇰🇷 ${name}`),
         ...(holidayMeta.jp || []).map((name) => `🇯🇵 ${name}`),
       ].join("\n")
     : "";
+  const anniversaryTitle = (anniversaryMarks || []).map((mark) => mark.title).join("\n");
 
   return <div data-date={d.key} onDragOver={(e) => { e.preventDefault(); setHoverDate(d.key); }} onDrop={(e) => { e.preventDefault(); const raw = e.dataTransfer.getData("text/plain"); if (raw) moveEvent(JSON.parse(raw), d.key, copyMode); setDragging(null); setHoverDate(null); setCopyMode(false); }} onDoubleClick={() => openNew(d.key)} className={cx("relative h-full min-h-[clamp(102px,12vh,160px)] border-b border-r border-[#efefef] bg-[#fdfdfd] px-[clamp(8px,0.9vw,13px)] py-[clamp(8px,1vh,13px)] [&:nth-child(7n)]:border-r-0", hoverDate === d.key && "ring-2 ring-[#d8eeee] ring-inset", todayKey === d.key && d.current && "before:absolute before:inset-0 before:bg-[#dcdcdc]/30 before:pointer-events-none ring-1 ring-[#dfe5e8] ring-inset")}>
     {!d.current && <span className="pointer-events-none absolute inset-0 z-0 bg-[#f1f1f1]/75" />}
     <div className="relative z-[30] mb-[2px] flex items-start justify-between gap-1">
       <button onClick={() => openNew(d.key)} className={`text-[14px] font-[600] tracking-[0em] ${!d.current ? "text-[#c9cfd3]" : holidayMeta?.kr?.length ? "text-[#ff8da1]" : holidayMeta?.jp?.length ? "text-[#7EA6FF]" : d.dow === 0 ? "text-[#FF8DA1]" : d.dow === 6 ? "text-[#7EA6FF]" : "text-[#555555]"}`}>{d.day}</button>
-      {holidayMeta && d.current && (
-        <div className="group/holiday relative z-[40] flex max-w-[104px] shrink-0 flex-wrap justify-end gap-[2px] pt-[1px]">
-          {holidayMeta.kr.length > 0 && <span className="rounded-full bg-[#fff1f4] px-[5px] py-[2px] text-[10px] font-black leading-none text-[#c796a5]">🇰🇷 공휴일</span>}
-          {holidayMeta.jp.length > 0 && <span className="rounded-full bg-[#f1f6ff] px-[5px] py-[2px] text-[10px] font-black leading-none text-[#7EA6FF]">🇯🇵 祝日</span>}
-          {holidayTitle && (
-            <span className="pointer-events-none absolute right-0 top-[22px] z-[60] hidden w-max max-w-[220px] whitespace-pre-line rounded-[8px] border border-[#e6e0da] bg-white px-3 py-2 text-left text-[11px] font-[600] leading-[1.45] text-[#544b44] shadow-[0_8px_20px_rgba(52,40,34,0.16)] group-hover/holiday:inline-block">
-              {holidayTitle}
+      {(holidayMeta || anniversaryMarks.length > 0) && d.current && (
+        <div className="group/holiday relative z-[40] flex max-w-[126px] shrink-0 flex-wrap justify-end gap-[2px] pt-[1px]">
+          {holidayMeta?.kr?.length > 0 && <span className="rounded-full bg-[#fff1f4] px-[5px] py-[2px] text-[10px] font-black leading-none text-[#c796a5]">🇰🇷 공휴일</span>}
+          {holidayMeta?.jp?.length > 0 && <span className="rounded-full bg-[#f1f6ff] px-[5px] py-[2px] text-[10px] font-black leading-none text-[#7EA6FF]">🇯🇵 祝日</span>}
+          {anniversaryMarks.slice(0, 3).map((mark, index) => (
+            <span
+              key={mark.id || `${mark.title}-${index}`}
+              className="text-[12px] font-black leading-none drop-shadow-[0_1px_0_rgba(255,255,255,0.88)]"
+              style={{ color: mark.color || "#e7a3b2" }}
+            >
+              ♥
+            </span>
+          ))}
+          {(holidayTitle || anniversaryTitle) && (
+            <span className="pointer-events-none absolute right-0 top-[22px] z-[60] hidden w-max max-w-[240px] whitespace-pre-line rounded-[8px] border border-[#e6e0da] bg-white px-3 py-2 text-left text-[11px] font-[600] leading-[1.45] text-[#544b44] shadow-[0_8px_20px_rgba(52,40,34,0.16)] group-hover/holiday:inline-block">
+              {[holidayTitle, anniversaryTitle].filter(Boolean).join("\n")}
             </span>
           )}
         </div>
       )}
     </div>
-    <div className="relative z-[1] mt-[8px] flex flex-col gap-0 pb-[18px]">{events.slice(0, 5).map((ev, index) => ev.isRoutine ? <RoutineCard key={ev.id} ev={ev} setState={setState} routineMonthKey={routineMonthKey} dim={!d.current} /> : <EventCard key={ev.id} ev={ev} index={index} dim={!d.current} cat={cat(ev.categoryId)} dragging={dragging?.id === ev.id} onEdit={() => openEdit(ev)} onDragStart={(e) => { if (ev.isHoliday) return e.preventDefault(); setDragging(ev); setCopyMode(e.altKey || e.ctrlKey || e.metaKey); e.dataTransfer.setData("text/plain", JSON.stringify(ev)); }} onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); const raw = e.dataTransfer.getData("text/plain"); if (raw) moveEvent(JSON.parse(raw), d.key, copyMode, ev.id); setDragging(null); setHoverDate(null); setCopyMode(false); }} onDragEnd={() => { setDragging(null); setHoverDate(null); setCopyMode(false); }} />)}{events.length > 5 && <button className="mt-[2px] text-[8px] font-bold text-[#aaa]" onClick={() => alert(events.map((e) => e.title).join("\n"))}>+{events.length - 5}</button>}</div>
+    <div className="relative z-[1] mt-[8px] flex flex-col gap-0 pb-[18px]">{events.slice(0, 5).map((ev, index) => ev.isContinuousPlaceholder ? (
+  ev.isContinuousHitbox ? (
+    <button
+      key={ev.id}
+      type="button"
+      aria-label="이어진 일정 수정"
+      title="이어진 일정 수정"
+      className="relative z-[40] h-[31px] w-full shrink-0 cursor-pointer rounded-[10px] bg-transparent hover:bg-black/[0.015]"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (ev.continuousTarget) {
+          openEdit(ev.continuousTarget);
+        }
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const raw = e.dataTransfer.getData("text/plain");
+        if (raw && ev.continuousTarget) {
+          moveEvent(JSON.parse(raw), d.key, copyMode, ev.continuousTarget.id);
+        }
+        setDragging(null);
+        setHoverDate(null);
+        setCopyMode(false);
+      }}
+    />
+  ) : (
+    <div key={ev.id} className="pointer-events-none h-[31px] shrink-0" />
+  )
+) : ev.isRoutine ? <RoutineCard key={ev.id} ev={ev} setState={setState} routineMonthKey={routineMonthKey} dim={!d.current} /> : <EventCard key={ev.id} ev={ev} index={index} dim={!d.current} cat={cat(ev.categoryId)} dragging={dragging?.id === ev.id} onEdit={(target) => openEdit(target || ev)} onDragStart={(e) => { if (ev.isHoliday) return e.preventDefault(); const dragTarget = Array.isArray(ev.continuousItems) && ev.continuousItems.length ? ev.continuousItems[0] : ev; setDragging(dragTarget); setCopyMode(e.altKey || e.ctrlKey || e.metaKey); e.dataTransfer.setData("text/plain", JSON.stringify(dragTarget)); }} onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); const raw = e.dataTransfer.getData("text/plain"); if (raw) moveEvent(JSON.parse(raw), d.key, copyMode, ev.id); setDragging(null); setHoverDate(null); setCopyMode(false); }} onDragEnd={() => { setDragging(null); setHoverDate(null); setCopyMode(false); }} />)}{events.length > 5 && <button className="mt-[2px] text-[8px] font-bold text-[#aaa]" onClick={() => alert(events.map((e) => e.title).join("\n"))}>+{events.length - 5}</button>}</div>
   </div>;
 }
 
@@ -1552,6 +2123,37 @@ function EventCard({ ev, cat, dragging, onEdit, onDragStart, onDragOver, onDrop,
   const hasUrl = Boolean(String(ev.url || "").trim());
   const normalizedUrl = hasUrl && !/^https?:\/\//i.test(ev.url) ? `https://${ev.url}` : ev.url;
   const infoTitle = [hasMemo ? `메모: ${ev.memo}` : "", hasUrl ? `링크: ${ev.url}` : ""].filter(Boolean).join("\n");
+  const continuousSpan = Math.max(1, Number(ev.continuousSpan) || 1);
+  const isContinuousDisplay = continuousSpan > 1 || ev.continuesFromPrev || ev.continuesNext;
+  const randomTilt = 0;
+  const displayLines = String(ev.continuousDisplayTitle || ev.title || "").split("\n");
+  const continuousItems = Array.isArray(ev.continuousItems) ? ev.continuousItems : [];
+
+  function handleEventClick(e) {
+    e.stopPropagation();
+
+    if (continuousItems.length > 1) {
+      const menu = continuousItems
+        .map((item, idx) => `${idx + 1}. ${item.date}${item.startTime ? ` ${item.startTime}` : ""} ${item.title || ""}`.trim())
+        .join("\n");
+      const selected = window.prompt(`수정할 날짜를 선택해 주세요.\n\n${menu}`, "1");
+      if (selected === null) return;
+
+      const index = Number(selected) - 1;
+      const target = continuousItems[index];
+
+      if (target) {
+        onEdit(target);
+        return;
+      }
+
+      alert("선택 번호를 확인해 주세요.");
+      return;
+    }
+
+    onEdit(ev);
+  }
+
   return (
     <button
       draggable={!holiday}
@@ -1559,40 +2161,55 @@ function EventCard({ ev, cat, dragging, onEdit, onDragStart, onDragOver, onDrop,
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      onClick={(e) => { e.stopPropagation(); onEdit(); }}
+      onClick={handleEventClick}
       className={cx(
-        "group relative isolate z-[1] block w-full overflow-visible rounded-[7px] px-[11px] pb-[7px] pt-[7px] text-left transition-all duration-[120ms] ease-out hover:z-[500] hover:-translate-y-[0.5px] focus:z-[500] active:translate-y-[0.5px]",
+        "group relative isolate block overflow-visible rounded-[10px] px-[11px] pb-[7px] pt-[7px] text-left transition-all duration-[120ms] ease-out hover:z-[500] hover:-translate-y-[0.5px] focus:z-[500] active:translate-y-[0.5px]",
+        isContinuousDisplay ? "z-[30]" : "z-[1] w-full",
         hasTimeBadge && "py-[6px]",
 
         index > 0 && "mt-[-2px]",
         dragging && "opacity-50 ring-2 ring-[#d8c6ee]"
       )}
       style={{
+        width: continuousSpan > 1 ? `calc(${continuousSpan * 100}% + ${(continuousSpan - 1) * 20}px)` : "100%",
         backgroundColor: cat.color,
+        transform: `rotate(${randomTilt}deg)`,
         opacity: dim ? 0.42 : 1,
         boxShadow:
-          "0 -1px 2px rgba(54,42,34,0.04), 0 4px 8px rgba(82,68,58,0.06), 0 10px 18px rgba(82,68,58,0.04), inset 0 1px 0 rgba(255,255,255,0.42)",
+          "0 -1px 2px rgba(54,42,34,0.04), 0 4px 8px rgba(82,68,58,0.06), 0 10px 18px rgba(82,68,58,0.04), inset 0 1px 0 rgba(255,255,255,0.88)",
         filter: "none",
       }}
     >
       <span
-        className="pointer-events-none absolute inset-0 rounded-[7px] opacity-[0.028] mix-blend-multiply"
+        className="pointer-events-none absolute inset-0 rounded-[10px] opacity-[0.028] mix-blend-multiply"
         style={{
-          backgroundImage: "radial-gradient(rgba(72,56,44,0.2) 0.36px, transparent 0.36px), radial-gradient(rgba(255,255,255,0.65) 0.44px, transparent 0.44px)",
+          backgroundImage: "radial-gradient(rgba(72,56,44,0.2) 0.36px, transparent 0.36px), radial-gradient(rgba(255,255,255,0.88) 0.44px, transparent 0.44px)",
           backgroundSize: "12px 12px, 18px 18px",
           backgroundPosition: "0 0, 5px 7px",
         }}
       />
       <span
-        className="pointer-events-none absolute inset-0 rounded-[7px] opacity-[0.03]"
+        className="pointer-events-none absolute inset-0 rounded-[10px] opacity-[0.03]"
         style={{
-          backgroundImage: "repeating-linear-gradient(0deg, rgba(255,255,255,0.08) 0px, rgba(255,255,255,0.08) 1px, transparent 1px, transparent 4px)",
+          backgroundImage: "repeating-none 0px, rgba(255,255,255,0.88) 1px, transparent 1px, transparent 4px)",
         }}
       />
       <span
-        className="absolute left-1/2 top-[-4px] z-[5] h-[9px] w-[34px] -translate-x-1/2 rounded-[5px] border border-white/24 bg-white/50 opacity-[0.66] shadow-[0_1px_2px_rgba(52,40,34,0.1),0_2px_5px_rgba(52,40,34,0.065)] backdrop-blur-[0.5px]"
-        style={{ boxShadow: "0 1px 2px rgba(52,40,34,0.1), 0 3px 5px rgba(52,40,34,0.065), inset 0 1px 0 rgba(255,255,255,0.32)" }}
+        className="pointer-events-none absolute left-[-4px] top-[-4px] z-[5] h-[11px] w-[26px] rotate-[-17deg] rounded-[2px]"
+        style={{
+          background: "rgba(255,255,255,0.6)",
+          opacity: 0.6,
+          border: "1px solid rgba(124,119,112,0.33)",
+          boxShadow: "0 1px 3px rgba(50,50,50,0.08), inset 0 1px 0 rgba(255,255,255,0.45)",
+        }}
       />
+
+      {ev.continuesFromPrev && (
+        <span className="absolute left-[6px] top-1/2 z-[4] -translate-y-1/2 text-[13px] font-black text-[#9a948d] opacity-80">→</span>
+      )}
+      {ev.continuesNext && (
+        <span className="absolute right-[6px] top-1/2 z-[4] -translate-y-1/2 text-[13px] font-black text-[#9a948d] opacity-80">→</span>
+      )}
 
       <span className={cx("relative z-[2] block pr-[4px]", hasTimeBadge && "flex items-center gap-[1px]")}>
         {hasTimeBadge && (
@@ -1602,9 +2219,9 @@ function EventCard({ ev, cat, dragging, onEdit, onDragStart, onDragOver, onDrop,
         )}
         <span
           className="block whitespace-pre-line text-[12px] font-medium leading-[1.28] tracking-[0em] text-[#2f2a26]"
-          style={{ textRendering: "geometricPrecision", WebkitFontSmoothing: "antialiased", fontWeight: 500 }}
+          style={{ textRendering: "geometricPrecision", WebkitFontSmoothing: "antialiased", fontWeight: 500, paddingLeft: ev.continuesFromPrev ? 18 : 0, paddingRight: ev.continuesNext ? 16 : 0 }}
         >
-          {lines.map((line, i) => <React.Fragment key={i}>{line}{i < lines.length - 1 && <br />}</React.Fragment>)}
+          {displayLines.map((line, i) => <React.Fragment key={i}>{line}{i < displayLines.length - 1 && <br />}</React.Fragment>)}
         </span>
         {ev.startTime && !hasTimeBadge && <span className="mt-[2px] block text-[10px] font-bold leading-[1.3] tracking-[-0.01em] text-[#3f3934]">{ev.startTime}</span>}
       </span>
@@ -1643,8 +2260,195 @@ function RoutineCard({ ev, setState, routineMonthKey, dim = false }) {
   return <button onClick={(e) => { e.stopPropagation(); setState((s) => ({ ...s, routineDoneByMonth: { ...s.routineDoneByMonth, [routineMonthKey]: { ...(s.routineDoneByMonth?.[routineMonthKey] || {}), [ev.routineTodoId]: !ev.done } } })); }} className={cx("block w-full bg-transparent px-[2px] py-[1px] text-left text-[11px] font-bold text-[#777] transition-opacity", dim && "opacity-45", ev.done && "opacity-40 line-through")}>✓ {ev.title}</button>;
 }
 
+
+function AnniversaryPanel({ items = [], onEdit }) {
+  const visible = (items || []).slice(0, 5);
+  const hasItems = visible.length > 0;
+
+  const paperTexture = {
+    backgroundImage:
+      "radial-gradient(rgba(75,60,45,0.03) 0.42px, transparent 0.62px)",
+    backgroundSize: "6px 6px, 100% 100%",
+  };
+
+  return (
+    <div className="mt-auto pt-[46px]">
+      <div className="-ml-[10px] w-[calc(100%+20px)] space-y-[7px]">
+        {hasItems ? visible.map((item) => {
+          const palette = getAnniversaryPalette(item);
+          return (
+            <button
+              key={item.id || `${item.title}-${item.date}`}
+              type="button"
+              onClick={onEdit}
+              className="group/anniv relative flex min-h-[78px] w-full items-start overflow-visible rounded-[10px] px-[16px] py-[13px] pr-[102px] text-left transition hover:-translate-y-[0.25px]"
+              style={{
+                backgroundColor: palette.color,
+                border: "1px solid rgba(125,115,105,0.13)",
+                transform: `rotate(${[-1.7, 1.25, -1.05, 1.45][visible.indexOf(item)%4]}deg)`,
+                ...paperTexture,
+                boxShadow: "0 6px 14px rgba(64,52,42,0.085), 0 2px 5px rgba(64,52,42,0.045)",
+              }}
+            >
+              <span
+                className="pointer-events-none absolute left-[-6px] top-[-7px] z-[4] h-[12px] w-[42px] rotate-[-17deg] rounded-[2px]"
+                style={{
+                  backgroundColor: "rgba(255,255,255,0.58)",
+                  opacity: 1,
+                  border: "1px solid rgba(145,140,132,0.24)",
+                  boxShadow: "0 2px 5px rgba(50,50,50,0.08), inset 0 1px 0 rgba(255,255,255,0.56)",
+                }}
+              />
+              <span className="relative z-[2] min-w-0 leading-none">
+                <span className="block truncate text-[11px] font-[800] leading-[0.98] tracking-[-0.02em] text-[#3f3833]">{item.title || "기념일"}</span>
+                <span className="mt-[0px] block text-[9px] font-[700] leading-[0.98] tracking-[-0.01em] text-[#8f867e]">{item.dateDisplay || item.targetKey}</span>
+                <span className="mt-[2px] block text-[22px] font-[900] leading-[0.92] tracking-[-0.055em] text-[#22201f]">{item.label}</span>
+              </span>
+              {item.image && (
+                <img
+                  src={item.image}
+                  alt="anniversary"
+                  className="pointer-events-none absolute bottom-[7px] right-[16px] z-[1] h-[63px] max-w-[96px] object-contain"
+                />
+              )}
+              <span className="absolute right-[-5px] top-[-7px] z-[5] grid h-[27px] w-[27px] place-items-start rounded-full border border-[#ece9e5] bg-white/95 text-[12px] font-black text-[#111] opacity-0 shadow-[0_3px_7px_rgba(0,0,0,0.075)] transition-opacity group-hover/anniv:opacity-100">✎</span>
+            </button>
+          );
+        }) : (
+          <button
+            type="button"
+            onClick={onEdit}
+            className="group/anniv relative flex min-h-[62px] w-full items-start rounded-[10px] bg-[#fffaf0] px-[15px] py-[9px] text-left opacity-75"
+            style={{ ...paperTexture, boxShadow: "0 2px 4px rgba(64,52,42,0.035)" }}
+          >
+            <span className="text-[11px] font-[800] leading-[1.1] text-[#aaa19a]">기념일 스티커를 추가해 보세요.</span>
+            <span className="absolute right-[-5px] top-[-7px] grid h-[27px] w-[27px] place-items-start rounded-full border border-[#ece9e5] bg-white/95 text-[12px] font-black text-[#111] opacity-0 shadow-[0_3px_7px_rgba(0,0,0,0.075)] transition-opacity group-hover/anniv:opacity-100">✎</span>
+          </button>
+        )}
+      </div>
+      {items.length > visible.length && <button type="button" onClick={onEdit} className="mt-[7px] w-full text-center text-[10px] font-[800] text-[#aaa19c]">+{items.length - visible.length} 더보기</button>}
+    </div>
+  );
+}
+
+function AnniversaryModal({ drafts, setDrafts, onClose, onSave }) {
+  function addItem() {
+    setDrafts((items) => [...items, { id: uid(), title: "", date: "", image: "", colorId: "cream", customColor: "" }]);
+  }
+
+  function updateItem(index, patch) {
+    setDrafts((items) => items.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  }
+
+  function removeItem(index) {
+    setDrafts((items) => items.filter((_, i) => i !== index));
+  }
+
+  function moveItem(index, delta) {
+    setDrafts((items) => {
+      const next = [...items];
+      const target = index + delta;
+      if (target < 0 || target >= next.length) return items;
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  }
+
+  function loadItemImage(index, file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => updateItem(index, { image: String(reader.result) });
+    reader.readAsDataURL(file);
+  }
+
+  return (
+    <Modal size="w-[520px]">
+      <ModalHead sub="d-day stickers" onClose={onClose} />
+      <div className="max-h-[72vh] space-y-3 overflow-y-auto p-5">
+        <div className="rounded-[14px] border border-dashed border-[#e7e0d8] bg-[#fffdf9] px-4 py-3 text-[11px] font-[700] leading-[1.55] text-[#9a9189]">
+          데스크톱 사이드바 최하단에만 스티커처럼 표시돼요. 모바일 화면에는 스티커 카드는 표시하지 않습니다.
+        </div>
+        <div className="space-y-3">
+          {drafts.map((item, index) => (
+            <div key={item.id || index} className="rounded-[14px] border border-[#ececec] bg-white p-3 shadow-[0_1px_4px_rgba(0,0,0,0.025)]">
+              <div className="flex gap-3">
+                <label className="flex h-[68px] w-[78px] shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-[10px] bg-[#f7f4ef] text-[18px] text-[#c8bfb6]">
+                  {item.image ? <img src={item.image} alt="d-day" className="h-full w-full object-contain" /> : <span>♡</span>}
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => { loadItemImage(index, e.target.files?.[0]); e.currentTarget.value = ""; }} />
+                </label>
+                <div className="min-w-0 flex-1 space-y-2">
+                  <input
+                    value={item.title || ""}
+                    onChange={(e) => updateItem(index, { title: e.target.value })}
+                    placeholder="기념일 이름"
+                    className="h-[32px] w-full rounded-[10px] border border-[#e5e5e5] bg-[#fffefe] px-3 text-[12px] font-[700] text-[#555] outline-none"
+                  />
+                  <input
+                    type="date"
+                    value={item.date || ""}
+                    onChange={(e) => updateItem(index, { date: e.target.value })}
+                    className="h-[32px] w-full rounded-[10px] border border-[#e5e5e5] bg-[#fffefe] px-3 text-[12px] font-[700] text-[#777] outline-none"
+                  />
+                </div>
+              </div>
+              <div className="mt-3 grid grid-cols-8 gap-2">
+                {ANNIVERSARY_COLORS.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    title={c.label}
+                    onClick={() => updateItem(index, { colorId: c.id, customColor: "" })}
+                    className={cx("h-[24px] rounded-[10px] border transition", !item.customColor && (item.colorId || "cream") === c.id ? "border-[#6f6860] ring-2 ring-[#e8e1da]" : "border-[#e7e1da]")}
+                    style={{ background: c.color }}
+                  />
+                ))}
+                <label
+                  title="직접 색상 선택"
+                  className={cx("relative flex h-[24px] cursor-pointer items-center justify-center rounded-[10px] border text-[13px] font-black text-[#777] transition", item.customColor ? "border-[#6f6860] ring-2 ring-[#e8e1da]" : "border-[#e7e1da]")}
+                  style={{ background: item.customColor || "#fff" }}
+                >
+                  +
+                  <input
+                    type="color"
+                    value={item.customColor || getAnniversaryColor(item.colorId || "cream").color}
+                    onChange={(e) => updateItem(index, { customColor: e.target.value })}
+                    className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                  />
+                </label>
+              </div>
+              <div className="mt-2 flex items-center justify-between">
+                <div className="text-[10px] font-[700] text-[#aaa]">
+                  {item.customColor ? `직접 색상 ${item.customColor}` : "프리셋 색상"}
+                </div>
+                {item.customColor && (
+                  <button type="button" onClick={() => updateItem(index, { customColor: "" })} className="text-[10px] font-[800] text-[#aaa]">직접색 해제</button>
+                )}
+              </div>
+              <div className="mt-3 flex justify-between gap-2">
+                <div className="flex gap-1">
+                  <button type="button" onClick={() => moveItem(index, -1)} disabled={index === 0} className="h-[30px] w-[30px] rounded-[8px] border bg-[#fafafa] text-[13px] font-black text-[#777] disabled:opacity-30">↑</button>
+                  <button type="button" onClick={() => moveItem(index, 1)} disabled={index === drafts.length - 1} className="h-[30px] w-[30px] rounded-[8px] border bg-[#fafafa] text-[13px] font-black text-[#777] disabled:opacity-30">↓</button>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => updateItem(index, { image: "" })} disabled={!item.image} className="rounded-[9px] border border-[#e8e8e8] bg-[#fafafa] px-3 py-2 text-[10px] font-[800] text-[#aaa] disabled:opacity-35">이미지 삭제</button>
+                  <button type="button" onClick={() => removeItem(index)} className="rounded-[9px] border border-[#f0d7dc] bg-[#fff9fa] px-3 py-2 text-[10px] font-[900] text-[#c88a96]">삭제</button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button type="button" onClick={addItem} className="w-full rounded-[13px] border border-dashed border-[#ded8d2] bg-[#fffefd] py-3 text-[12px] font-[900] text-[#9b9188]">＋ 추가</button>
+        <div className="flex justify-end gap-2 border-t border-dashed border-[#e5e5e5] pt-3">
+          <button onClick={onClose} className="rounded-[10px] border bg-white px-4 py-2 text-[12px] font-bold text-[#888]">취소</button>
+          <button onClick={onSave} className="rounded-[10px] bg-[#333] px-5 py-2 text-[12px] font-black text-white">저장</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function Section({ title, children, onAdd, noTop }) {
-  return <section className="group/section border-t border-[#dedede] pt-[18px]" style={{ marginTop: noTop ? 22 : 22 }}><div className="flex items-center justify-between text-[15px] font-[900] tracking-[0em]"><span>{title}</span><button type="button" aria-label={`${title} 편집`} title="편집" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onAdd?.(); }} className="grid h-[26px] w-[26px] place-items-center rounded-full border border-[#e8e8e8] bg-white/90 text-[12px] font-black text-[#111] opacity-0 shadow-[0_6px_14px_rgba(0,0,0,0.10)] transition-opacity duration-150 hover:bg-white group-hover/section:opacity-100">✎</button></div>{children}</section>;
+  return <section className="group/section border-t border-[#dedede] pt-[18px]" style={{ marginTop: noTop ? 22 : 22 }}><div className="flex items-center justify-between text-[15px] font-[900] tracking-[0em]"><span>{title}</span><button type="button" aria-label={`${title} 편집`} title="편집" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onAdd?.(); }} className="grid h-[26px] w-[26px] place-items-center rounded-full border border-[#e8e8e8] bg-white/90 text-[12px] font-black leading-none text-[#111] opacity-0 shadow-[0_6px_14px_rgba(0,0,0,0.10)] transition-opacity duration-150 hover:bg-white group-hover/section:opacity-100">✎</button></div>{children}</section>;
 }
 
 function Todo({ todo, routineMonthKey, routineDoneByMonth, onToggle, onEdit }) {
@@ -1653,7 +2457,6 @@ function Todo({ todo, routineMonthKey, routineDoneByMonth, onToggle, onEdit }) {
     <input type="checkbox" checked={done} onChange={(e) => { e.stopPropagation(); onToggle?.(todo); }} className="h-[15px] w-[15px] shrink-0 accent-[#cfcfcf]" />
     <button type="button" onClick={() => onToggle?.(todo)} className="min-w-0 flex-1 truncate text-left">{todo.text}</button>
     {todo.day && <span className="shrink-0 text-[8px] text-[#aaa]">{todo.day}일</span>}
-    <button type="button" onClick={(e) => { e.stopPropagation(); onEdit?.(todo); }} className="grid h-[20px] w-[20px] shrink-0 place-items-center rounded-full text-[12px] text-[#aaa] opacity-0 hover:bg-[#eee] group-hover:opacity-100" aria-label="리스트 수정">✎</button>
   </div>;
 }
 
@@ -1677,7 +2480,7 @@ function EventModal({ selectedDate, editingEvent, target, draft, setDraft, state
 }
 
 function GuideModal({ onClose }) {
-  const [openedDetail, setOpenedDetail] = useState(null);
+  const clientIdGuideUrl = "https://docs.google.com/document/d/10gnHLosLskc2E8M4PRku04PcnttYH1uINTqlOgrQGYo/edit?usp=sharing";
   const sections = [
     {
       title: "일정 복제",
@@ -1714,7 +2517,7 @@ function GuideModal({ onClose }) {
     },
   ];
 
-  return <Modal size="w-[480px]"><ModalHead sub="calendar usage" onClose={onClose} /><div className="max-h-[74vh] overflow-y-auto p-5"><div className="space-y-3">{sections.map((section) => <div key={section.title} className="rounded-[14px] border border-[#ececec] bg-white px-4 py-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)]"><div className="mb-[7px] text-[14px] font-[900] tracking-[-0.02em] text-[#444]">{section.title}</div><div className="whitespace-pre-line text-[12px] font-[600] leading-[1.65] tracking-[-0.012em] text-[#777]">{section.body}</div>{section.detail && <div className="mt-3"><button onClick={() => setOpenedDetail(openedDetail === section.title ? null : section.title)} className="rounded-full border border-[#e5e5e5] bg-[#fafafa] px-3 py-[5px] text-[10px] font-[600] tracking-[0.04em] text-[#777]">{openedDetail === section.title ? "닫기" : "Client ID 확인 방법 보기"}</button>{openedDetail === section.title && <div className="mt-3 whitespace-pre-line rounded-[10px] border border-dashed border-[#e4e4e4] bg-[#fafafa] px-3 py-3 text-[11px] font-[600] leading-[1.7] tracking-[-0.012em] text-[#777]">{section.detail}</div>}</div>}</div>)}</div></div></Modal>;
+  return <Modal size="w-[480px]"><ModalHead sub="calendar usage" onClose={onClose} /><div className="max-h-[74vh] overflow-y-auto p-5"><div className="space-y-3">{sections.map((section) => <div key={section.title} className="rounded-[14px] border border-[#ececec] bg-white px-4 py-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)]"><div className="mb-[7px] text-[14px] font-[900] tracking-[-0.02em] text-[#444]">{section.title}</div><div className="whitespace-pre-line text-[12px] font-[600] leading-[1.65] tracking-[-0.012em] text-[#777]">{section.body}</div>{section.detail && <div className="mt-3"><button onClick={() => window.open(clientIdGuideUrl, "_blank", "noopener,noreferrer")} className="rounded-full border border-[#e5e5e5] bg-[#fafafa] px-3 py-[5px] text-[10px] font-[600] tracking-[0.04em] text-[#777]">Client ID 생성 방법 보기</button></div>}</div>)}</div></div></Modal>;
 }
 
 function SettingsModal({state, setState, driveStatus, driveConnected, updateStatus, onDriveConnect, onDriveSave, onDriveLoad, onCheckUpdate, onClose, onBackup, activeProgramDebug}) {
@@ -1724,7 +2527,7 @@ function SettingsModal({state, setState, driveStatus, driveConnected, updateStat
   const [programPickerOpen, setProgramPickerOpen] = useState(false);
   const [autoLaunchStatus, setAutoLaunchStatus] = useState("EXE에서 사용 가능");
   const autoLaunchSupported = typeof window !== "undefined" && Boolean(window.__XL_AUTO_LAUNCH__?.get && window.__XL_AUTO_LAUNCH__?.set);
-  const toggles = [["고정 리스트", "showFixedList"], ["오늘 리스트", "showTodayList"], ["타이머 바", "showTimerBar"], ["일본 祝日", "showJapanHolidays"]];
+  const toggles = [["고정 리스트", "showFixedList"], ["오늘 리스트", "showTodayList"], ["타이머 바", "showTimerBar"], ["디데이", "showAnniversaryPanel"], ["일본 祝日", "showJapanHolidays"], ["재부팅 자동시작", "autoLaunch"]];
 
   useEffect(() => {
     let cancelled = false;
@@ -1737,7 +2540,7 @@ function SettingsModal({state, setState, driveStatus, driveConnected, updateStat
         const enabled = await window.__XL_AUTO_LAUNCH__.get();
         if (!cancelled) {
           setState((s) => ({ ...s, autoLaunchOnStartup: Boolean(enabled) }));
-          setAutoLaunchStatus(Boolean(enabled) ? "재부팅 시 자동시작 켜짐" : "재부팅 시 자동시작 꺼짐");
+          setAutoLaunchStatus(Boolean(enabled) ? "" : "");
         }
       } catch {
         if (!cancelled) setAutoLaunchStatus("자동시작 상태 확인 실패");
@@ -1761,7 +2564,7 @@ function SettingsModal({state, setState, driveStatus, driveConnected, updateStat
     try {
       const enabled = await window.__XL_AUTO_LAUNCH__.set(next);
       setState((s) => ({ ...s, autoLaunchOnStartup: Boolean(enabled) }));
-      setAutoLaunchStatus(Boolean(enabled) ? "재부팅 시 자동시작 켜짐" : "재부팅 시 자동시작 꺼짐");
+      setAutoLaunchStatus(Boolean(enabled) ? "" : "");
     } catch {
       setAutoLaunchStatus("자동시작 설정 실패");
     }
@@ -1822,7 +2625,11 @@ function SettingsModal({state, setState, driveStatus, driveConnected, updateStat
     };
     reader.readAsText(file);
   }
-  return <Modal size="w-[420px]"><ModalHead sub="settings" onClose={onClose} /><div className="space-y-2 p-5"><div className="grid grid-cols-2 gap-2">{toggles.map(([label, key]) => <button key={key} onClick={() => setState((s) => ({ ...s, [key]: !s[key] }))} className="flex w-full min-w-0 items-center justify-between gap-2 rounded-[14px] border bg-white px-4 py-3 text-[13px] font-bold"><span className="min-w-0 truncate">{label}</span><span className={cx("relative h-6 w-11 shrink-0 rounded-full border p-[2px]", state[key] ? "bg-[#c7d9f0] border-[#9cb8db]" : "bg-[#ececec] border-[#dddddd]")}><span className={cx("block h-5 w-5 rounded-full bg-white shadow transition", state[key] && "translate-x-5 bg-[#ffffff]")} /></span></button>)}</div><div className="mt-4 rounded-[14px] border border-dashed border-[#e5e5e5] bg-[#fafafa] p-3"><div className="mb-2"><div className="mb-2 flex items-center justify-between"><div><div className="text-[11px] font-black tracking-[0.08em] text-[#777]">작업 추적 프로그램</div><div className="text-[8px] text-[#aaa]">최대 5개 등록 가능</div><div className="mt-1 rounded-[8px] bg-white px-2 py-1 text-[10px] font-[700] text-[#999]">현재 감지값: {activeProgramDebug || "(감지 없음)"}</div></div></div><div className="flex gap-2">
+  return <Modal size="w-[420px]"><ModalHead sub="settings" onClose={onClose} /><div className="space-y-2 p-5"><div className="grid grid-cols-2 gap-2">{toggles.map(([label, key]) => {
+    const isAuto = key === "autoLaunch";
+    const checked = isAuto ? state.autoLaunchOnStartup : state[key];
+    return <button key={key} onClick={() => isAuto ? toggleAutoLaunch() : setState((s) => ({ ...s, [key]: !s[key] }))} className="flex w-full min-w-0 items-center justify-between gap-2 rounded-[14px] border bg-white px-4 py-3 text-[13px] font-bold"><span className="min-w-0 truncate">{label}</span><span className={cx("relative h-6 w-11 shrink-0 rounded-full border p-[2px]", checked ? "bg-[#c7d9f0] border-[#9cb8db]" : "bg-[#ececec] border-[#dddddd]")}><span className={cx("block h-5 w-5 rounded-full bg-white shadow transition", checked && "translate-x-5 bg-[#ffffff]")} /></span></button>;
+  })}</div><div className="mt-4 rounded-[14px] border border-dashed border-[#e5e5e5] bg-[#fafafa] p-3"><div className="mb-2"><div className="mb-2 flex items-center justify-between"><div><div className="text-[11px] font-black tracking-[0.08em] text-[#777]">작업 추적 프로그램</div><div className="text-[8px] text-[#aaa]">최대 5개 등록 가능</div><div className="mt-1 rounded-[8px] bg-white px-2 py-1 text-[10px] font-[700] text-[#999]">현재 감지값: {activeProgramDebug || "(감지 없음)"}</div></div></div><div className="flex gap-2">
   <input
     value={trackedDraft}
     onChange={(e) => setTrackedDraft(e.target.value)}
@@ -1876,7 +2683,7 @@ function SettingsModal({state, setState, driveStatus, driveConnected, updateStat
 )}
 
 <div className="space-y-2">{state.trackedPrograms.map((program) => <div key={program} className="flex items-center gap-2 rounded-[10px] border bg-white px-3 py-2"><span className="h-[14px] w-[14px] rounded-full border border-[#d6d6d6] bg-[#f6f6f6]" /><span className="flex-1 truncate text-[12px] font-[600] text-[#555]">{program}</span><button onClick={() => removeTrackedProgram(program)} className="text-[13px] text-[#aaa]">×</button></div>)}</div></div></div><div className="mt-4 rounded-[14px] border border-dashed border-[#d9e4f0] bg-[#f8fbff] p-3"><div className="mb-2 text-[11px] font-black tracking-[0.08em] text-[#667]">Google Drive 연동</div><input value={state.driveClientId || ""} onChange={(e) => setState((s) => ({ ...s, driveClientId: e.target.value }))} placeholder="Google OAuth Client ID" className="mb-2 w-full rounded-[10px] border border-[#dfe6ee] bg-white px-3 py-2 text-[11px] outline-none" />
-        <input value={state.driveClientSecret || ""} onChange={(e) => setState((s) => ({ ...s, driveClientSecret: e.target.value }))} placeholder="Google OAuth Client Secret" type="password" className="h-[34px] rounded-[10px] border border-[#e5e5e5] bg-white px-3 text-[11px] outline-none" /><div className="mb-2 flex items-center justify-between rounded-[10px] bg-white px-3 py-2 text-[11px] text-[#777]"><span>{driveStatus}</span><span>{state.driveLastSyncedAt ? new Date(state.driveLastSyncedAt).toLocaleString() : "미동기화"}</span></div><div className="grid grid-cols-3 gap-2"><button onClick={onDriveConnect} className="rounded-[10px] border bg-white px-2 py-2 text-[11px] font-bold text-[#667]">연결</button><button onClick={onDriveLoad} disabled={!driveConnected} className="rounded-[10px] border bg-white px-2 py-2 text-[11px] font-bold text-[#667] disabled:opacity-40">불러오기</button><button onClick={onDriveSave} disabled={!driveConnected} className="rounded-[10px] border bg-white px-2 py-2 text-[11px] font-bold text-[#667] disabled:opacity-40">저장</button></div><button onClick={() => setState((s) => ({ ...s, driveAutoSync: !s.driveAutoSync }))} className="mt-2 flex w-full items-center justify-between rounded-[10px] border bg-white px-3 py-2 text-[11px] font-bold text-[#667]"><span>자동 동기화</span><span className={cx("relative h-5 w-9 rounded-full border p-[2px]", state.driveAutoSync ? "bg-[#c7d9f0] border-[#9cb8db]" : "bg-[#ececec] border-[#dddddd]")}><span className={cx("block h-4 w-4 rounded-full bg-white shadow transition", state.driveAutoSync && "translate-x-4")} /></span></button></div><div className="mt-4 rounded-[14px] border border-dashed border-[#e5e5e5] bg-[#fafafa] p-3"><div className="mb-2 flex items-center justify-between"><div><div className="text-[11px] font-black tracking-[0.08em] text-[#777]">업데이트 확인</div><div className="text-[8px] text-[#aaa]">현재 버전 {APP_VERSION}</div></div><button onClick={onCheckUpdate} className="rounded-[8px] border bg-white px-3 py-2 text-[11px] font-bold text-[#666]">확인</button></div><div className="rounded-[10px] bg-white px-3 py-2 text-[11px] text-[#777]">{updateStatus}{state.updateLastCheckedAt ? ` · ${new Date(state.updateLastCheckedAt).toLocaleString()}` : ""}</div><button type="button" onClick={toggleAutoLaunch} className="mt-2 flex w-full items-center justify-between rounded-[10px] border bg-white px-3 py-2 text-[11px] font-bold text-[#667]"><span>재부팅 시 자동시작</span><span className={cx("relative h-5 w-9 rounded-full border p-[2px]", state.autoLaunchOnStartup ? "bg-[#c7d9f0] border-[#9cb8db]" : "bg-[#ececec] border-[#dddddd]")}><span className={cx("block h-4 w-4 rounded-full bg-white shadow transition", state.autoLaunchOnStartup && "translate-x-4")} /></span></button><div className="mt-1 rounded-[10px] bg-white/70 px-3 py-2 text-[10px] font-[700] text-[#aaa]">{autoLaunchStatus}</div></div><div className="mt-4 grid grid-cols-4 gap-2 border-t border-dashed border-[#e5e5e5] pt-4"><button onClick={resetAll} className="rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">초기화</button><button onClick={backup} className="rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">백업</button><label className="flex cursor-pointer items-center justify-center rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">불러오기<input ref={backupRef} type="file" accept="application/json" className="hidden" onChange={(e) => loadBackup(e.target.files?.[0])} /></label><button onClick={onBackup} className="rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">백업관리</button></div></div></Modal>;
+        <input value={state.driveClientSecret || ""} onChange={(e) => setState((s) => ({ ...s, driveClientSecret: e.target.value }))} placeholder="Google OAuth Client Secret" type="password" className="h-[34px] rounded-[10px] border border-[#e5e5e5] bg-white px-3 text-[11px] outline-none" /><div className="mb-2 flex items-center justify-between rounded-[10px] bg-white px-3 py-2 text-[11px] text-[#777]"><span>{driveStatus}</span><span>{state.driveLastSyncedAt ? new Date(state.driveLastSyncedAt).toLocaleString() : "미동기화"}</span></div><div className="grid grid-cols-3 gap-2"><button onClick={onDriveConnect} className="rounded-[10px] border bg-white px-2 py-2 text-[11px] font-bold text-[#667]">연결</button><button onClick={onDriveLoad} disabled={!driveConnected} className="rounded-[10px] border bg-white px-2 py-2 text-[11px] font-bold text-[#667] disabled:opacity-40">불러오기</button><button onClick={onDriveSave} disabled={!driveConnected} className="rounded-[10px] border bg-white px-2 py-2 text-[11px] font-bold text-[#667] disabled:opacity-40">저장</button></div><button onClick={() => setState((s) => ({ ...s, driveAutoSync: !s.driveAutoSync }))} className="mt-2 flex w-full items-center justify-between rounded-[10px] border bg-white px-3 py-2 text-[11px] font-bold text-[#667]"><span>자동 동기화</span><span className={cx("relative h-5 w-9 rounded-full border p-[2px]", state.driveAutoSync ? "bg-[#c7d9f0] border-[#9cb8db]" : "bg-[#ececec] border-[#dddddd]")}><span className={cx("block h-4 w-4 rounded-full bg-white shadow transition", state.driveAutoSync && "translate-x-4")} /></span></button></div><div className="mt-4 rounded-[14px] border border-dashed border-[#e5e5e5] bg-[#fafafa] p-3"><div className="mb-2 flex items-center justify-between"><div><div className="text-[11px] font-black tracking-[0.08em] text-[#777]">업데이트 확인</div><div className="text-[8px] text-[#aaa]">현재 버전 {APP_VERSION}</div></div><button onClick={onCheckUpdate} className="rounded-[8px] border bg-white px-3 py-2 text-[11px] font-bold text-[#666]">확인</button></div><div className="rounded-[10px] bg-white px-3 py-2 text-[11px] text-[#777]">{updateStatus}{state.updateLastCheckedAt ? ` · ${new Date(state.updateLastCheckedAt).toLocaleString()}` : ""}</div></div><div className="mt-4 grid grid-cols-4 gap-2 border-t border-dashed border-[#e5e5e5] pt-4"><button onClick={resetAll} className="rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">초기화</button><button onClick={backup} className="rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">백업</button><label className="flex cursor-pointer items-center justify-center rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">불러오기<input ref={backupRef} type="file" accept="application/json" className="hidden" onChange={(e) => loadBackup(e.target.files?.[0])} /></label><button onClick={onBackup} className="rounded-[10px] border bg-[#fafafa] px-3 py-3 text-[12px] font-bold text-[#888]">백업관리</button></div></div></Modal>;
 }
 
 function TodoManageModal({ target, drafts, setDrafts, onSave, onClose }) {
@@ -1982,5 +2789,5 @@ function ImageModal({ state, setState, imageRef, onClose }) {
     }));
   };
 
-  return <Modal size="w-[320px]"><ModalHead sub="image" onClose={onClose} /><div className="space-y-3 p-5"><div className="grid grid-cols-4 gap-2"><button onClick={() => setState((s) => ({ ...s, fixedImageMode: !s.fixedImageMode }))} className={cx("rounded-[10px] border px-2 py-2 text-[8px]", state.fixedImageMode && "bg-[#efe5c8]")}>{state.fixedImageMode ? "고정 ON" : "고정 OFF"}</button>{["work", "other", "away"].map((slot) => <button key={slot} onClick={() => setState((s) => ({ ...s, selectedImageSlot: slot }))} className={cx("rounded-[10px] border px-2 py-2 text-[11px]", state.selectedImageSlot === slot && "bg-[#dce7f3]")}>{slot === "work" ? "작업" : slot === "other" ? "그 외" : "자리"}</button>)}</div><div className="grid min-h-[120px] place-items-center overflow-visible rounded-[12px] bg-transparent">{hasAnyImage ? <img src={state.timerImages?.[currentSlot] || state.image} alt="preview" className="block h-auto w-full rounded-[12px] object-contain" /> : <span className="text-[12px] text-[#aaa]">이미지 없음</span>}</div><button onClick={() => imageRef.current?.click()} className="w-full rounded-[12px] border bg-white py-3 text-[13px] font-bold">이미지 변경</button><div className="grid grid-cols-2 gap-2"><button onClick={clearCurrentImage} disabled={!hasSlotImage && !state.image} className="rounded-[12px] border border-[#f0d7dc] bg-[#fff9fa] py-3 text-[12px] font-black text-[#c88a96] disabled:opacity-35">현재 이미지 삭제</button><button onClick={clearAllImages} disabled={!hasAnyImage} className="rounded-[12px] border border-[#e7e7e7] bg-white py-3 text-[12px] font-bold text-[#999] disabled:opacity-35">전체 이미지 삭제</button></div></div></Modal>;
+  return <Modal size="w-[320px]"><ModalHead sub="image" onClose={onClose} /><div className="space-y-3 p-5"><div className="grid grid-cols-4 gap-2"><button onClick={() => setState((s) => ({ ...s, fixedImageMode: !s.fixedImageMode }))} className={cx("rounded-[10px] border px-2 py-2 text-[8px]", state.fixedImageMode && "bg-[#efe5c8]")}>{state.fixedImageMode ? "고정 ON" : "고정 OFF"}</button>{["work", "other", "away"].map((slot) => <button key={slot} onClick={() => setState((s) => ({ ...s, selectedImageSlot: slot }))} className={cx("rounded-[10px] border px-2 py-2 text-[11px]", state.selectedImageSlot === slot && "bg-[#dce7f3]")}>{slot === "work" ? "작업" : slot === "other" ? "그 외" : "자리"}</button>)}</div><div className="grid min-h-[120px] place-items-start overflow-visible rounded-[12px] bg-transparent">{hasAnyImage ? <img src={state.timerImages?.[currentSlot] || state.image} alt="preview" className="block h-auto w-full rounded-[12px] object-contain" /> : <span className="text-[12px] text-[#aaa]">이미지 없음</span>}</div><button onClick={() => imageRef.current?.click()} className="w-full rounded-[12px] border bg-white py-3 text-[13px] font-bold">이미지 변경</button><div className="grid grid-cols-2 gap-2"><button onClick={clearCurrentImage} disabled={!hasSlotImage && !state.image} className="rounded-[12px] border border-[#f0d7dc] bg-[#fff9fa] py-3 text-[12px] font-black text-[#c88a96] disabled:opacity-35">현재 이미지 삭제</button><button onClick={clearAllImages} disabled={!hasAnyImage} className="rounded-[12px] border border-[#e7e7e7] bg-white py-3 text-[12px] font-bold text-[#999] disabled:opacity-35">전체 이미지 삭제</button></div></div></Modal>;
 }

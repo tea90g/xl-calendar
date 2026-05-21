@@ -68,21 +68,28 @@ const isDev = !app.isPackaged;
 
 function getAutoLaunchEnabled() {
   try {
-    return app.getLoginItemSettings().openAtLogin;
-  } catch {
+    return Boolean(app.getLoginItemSettings({ path: process.execPath }).openAtLogin);
+  } catch (err) {
+    console.error("[XL Calendar] get auto launch failed:", err);
     return false;
   }
 }
 
 function setAutoLaunchEnabled(enabled) {
   try {
+    const openAtLogin = Boolean(enabled);
+
     app.setLoginItemSettings({
-      openAtLogin: Boolean(enabled),
+      openAtLogin,
+      openAsHidden: false,
       path: process.execPath,
+      args: [],
     });
+
     return getAutoLaunchEnabled();
-  } catch {
-    return false;
+  } catch (err) {
+    console.error("[XL Calendar] set auto launch failed:", err);
+    throw err;
   }
 }
 
@@ -453,7 +460,7 @@ function listenOnceForOAuthCode() {
     });
 
     server.on("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(64371, "127.0.0.1", () => {
       const address = server.address();
       resolve({ server, port: address.port });
     });
@@ -651,6 +658,7 @@ ipcMain.handle("xl:restore-backup", async (_event, fileName) => restoreStateBack
 
 ipcMain.handle("save-calendar-state", async (_event, data) => saveStateToFile(data));
 
+ipcMain.handle("load-calendar-state", async () => loadStateFromFile());
 
 
 ipcMain.handle("xl:get-auto-launch", async () => {
@@ -661,7 +669,6 @@ ipcMain.handle("xl:set-auto-launch", async (_event, enabled) => {
   return setAutoLaunchEnabled(enabled);
 });
 
-ipcMain.handle("load-calendar-state", async () => loadStateFromFile());
 
 
 app.whenReady().then(async () => {

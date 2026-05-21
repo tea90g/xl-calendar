@@ -1,6 +1,6 @@
 {
   "name": "xl-calendar",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "XL Calendar - React + Electron Windows desktop app",
   "main": "electron/main.cjs",
@@ -42,13 +42,17 @@
     ],
     "win": {
       "target": "nsis",
-      "artifactName": "XL-Calendar-Setup-${version}.${ext}"
+      "artifactName": "XL-Calendar-Setup-${version}.${ext}",
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "XL Calendar",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
     }
   }
 }
