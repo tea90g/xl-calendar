@@ -1811,7 +1811,9 @@ function MobileCalendar({
     makeDate(state.year, state.month, Math.min(new Date().getDate(), new Date(state.year, state.month, 0).getDate()))
   );
 
-  const activeEvents = (byDate.get(activeDate) || []).filter((ev) => !ev.isHoliday);
+  const activeEvents = (byDate.get(activeDate) || [])
+    .map((ev) => ev.isContinuousPlaceholder ? ev.continuousTarget : ev)
+    .filter((ev) => ev && !ev.isHoliday && !ev.isContinuousPlaceholder);
   const activeDay = activeDate ? Number(activeDate.split("-")[2]) : "";
 
   const [pendingAction, setPendingAction] = useState(null);
@@ -1927,7 +1929,7 @@ function MobileCalendar({
              
               onClick={() => { setActiveDate(key); if (pendingAction) applyPendingAction(key); }}
               className={cx(
-                "relative min-h-[74px] border-b border-r border-[#efefef] bg-white p-[5px] pt-[7px] text-left align-top last:border-r-0",
+                "relative min-h-[68px] border-b border-r border-[#efefef] bg-white p-[5px] pt-[7px] text-left align-top last:border-r-0",
                 isActive && "bg-[#fff7f8] ring-2 ring-[#ffdfe6] ring-inset"
               )}
             >
@@ -1945,21 +1947,29 @@ function MobileCalendar({
                 ))}
               </div>
 
-              <div className="mt-[22px] space-y-[2px]">
-                {events.slice(0, 2).map((ev) => (
-                  <div
-                    key={ev.id}
-                    className="flex min-h-[17px] items-center justify-between rounded-[6px] px-[5px] py-[3px] text-[9px] font-[700] leading-none text-[#333] shadow-[0_2px_5px_rgba(82,68,58,0.08)]"
-                    style={{ backgroundColor: cat(ev.categoryId).color }}
-                  >
-                    <span className="h-[6px] w-[18px] rounded-full bg-white/55" />
-                    <span className="flex items-center gap-[2px] text-[8px]">
-                      {ev.memo ? <span>📝</span> : null}
-                      {ev.url ? <span>🔗</span> : null}
-                    </span>
+              <div className="mt-[16px] space-y-[2px]">
+                {events
+                  .map((ev) => ev.isContinuousPlaceholder ? ev.continuousTarget : ev)
+                  .filter((ev) => ev && !ev.isContinuousPlaceholder)
+                  .slice(0, 2)
+                  .map((ev) => (
+                    <div
+                      key={ev.id}
+                      className="flex min-h-[17px] items-center justify-between rounded-[6px] px-[5px] py-[3px] text-[9px] font-[700] leading-none text-[#333] shadow-[0_2px_5px_rgba(82,68,58,0.08)]"
+                      style={{ backgroundColor: cat(ev.categoryId).color }}
+                    >
+                      <span className="h-[6px] w-[18px] rounded-full bg-white/55" />
+                      <span className="flex items-center gap-[2px] text-[8px]">
+                        {ev.memo ? <span>📝</span> : null}
+                        {ev.url ? <span>🔗</span> : null}
+                      </span>
+                    </div>
+                  ))}
+                {events.map((ev) => ev.isContinuousPlaceholder ? ev.continuousTarget : ev).filter((ev) => ev && !ev.isContinuousPlaceholder).length > 2 && (
+                  <div className="text-[9px] text-[#aaa]">
+                    +{events.map((ev) => ev.isContinuousPlaceholder ? ev.continuousTarget : ev).filter((ev) => ev && !ev.isContinuousPlaceholder).length - 2}
                   </div>
-                ))}
-                {events.length > 2 && <div className="text-[9px] text-[#aaa]">+{events.length - 2}</div>}
+                )}
               </div>
             </button>
           );
