@@ -537,7 +537,7 @@ export default function App() {
     const clientId = String(state.driveClientId || "").trim();
     const clientSecret = String(state.driveClientSecret || "").trim();
     if (!clientId) {
-      alert("설정에서 Google OAuth Client ID를 먼저 입력해줘.");
+      alert("설정에서 Google OAuth Client ID를 먼저 입력해 주세요.");
       return;
     }
 
@@ -2026,7 +2026,7 @@ function MobileCalendar({
             <button
               type="button"
               onClick={onOpenSettings}
-              className="grid h-[24px] w-[24px] shrink-0 place-items-start rounded-full border border-[#e2e7ef] bg-white text-[12px] text-[#7d8aa0] shadow-[0_2px_6px_rgba(0,0,0,0.04)]"
+              className="grid h-[24px] w-[24px] shrink-0 place-items-center rounded-full border border-[#e2e7ef] bg-white text-[12px] leading-none text-[#7d8aa0] shadow-[0_2px_6px_rgba(0,0,0,0.04)]"
               aria-label="Google Drive 설정"
             >
               ⚙
