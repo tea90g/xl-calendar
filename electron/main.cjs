@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, shell, powerMonitor } = require("electron");
 const path = require("path");
 const http = require("http");
 const https = require("https");
@@ -642,6 +642,10 @@ function createWindow() {
     `).catch(() => {});
   });
 }
+
+ipcMain.handle("xl:get-system-idle-time", () => {
+  return powerMonitor.getSystemIdleTime();
+});
 
 ipcMain.handle("xl:get-active-program", async () => getActiveProgram());
 ipcMain.handle("xl:get-active-program-detail", async () => getActiveProgramDetail());

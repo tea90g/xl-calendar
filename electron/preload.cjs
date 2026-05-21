@@ -44,3 +44,12 @@ const autoLaunchApi = {
 };
 
 contextBridge.exposeInMainWorld("__XL_AUTO_LAUNCH__", autoLaunchApi);
+
+
+contextBridge.exposeInMainWorld("__XL_GET_SYSTEM_IDLE_TIME__", async () => {
+  try {
+    return await ipcRenderer.invoke("xl:get-system-idle-time");
+  } catch {
+    return 0;
+  }
+});

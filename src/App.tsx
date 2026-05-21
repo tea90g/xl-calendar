@@ -213,6 +213,36 @@ async function getActiveProgramName() {
   return "";
 }
 
+async function getSystemIdleSeconds() {
+  if (typeof window === "undefined") return 0;
+
+  try {
+    if (typeof window.__XL_GET_SYSTEM_IDLE_TIME__ === "function") {
+      const value = await window.__XL_GET_SYSTEM_IDLE_TIME__();
+      return Math.max(0, Number(value) || 0);
+    }
+
+    if (typeof window.__XL_GET_SYSTEM_IDLE_SECONDS__ === "function") {
+      const value = await window.__XL_GET_SYSTEM_IDLE_SECONDS__();
+      return Math.max(0, Number(value) || 0);
+    }
+
+    if (window.electron && typeof window.electron.getSystemIdleTime === "function") {
+      const value = await window.electron.getSystemIdleTime();
+      return Math.max(0, Number(value) || 0);
+    }
+
+    if (window.__XL_STATE__ && typeof window.__XL_STATE__.getSystemIdleTime === "function") {
+      const value = await window.__XL_STATE__.getSystemIdleTime();
+      return Math.max(0, Number(value) || 0);
+    }
+  } catch {
+    // Fallback below.
+  }
+
+  return Math.max(0, Math.floor((Date.now() - window.__XL_LAST_LOCAL_INPUT_AT__) / 1000) || 0);
+}
+
 function normalizeProgramName(value) {
   return String(value || "")
     .toLowerCase()
@@ -433,6 +463,7 @@ export default function App() {
   const [activeProgramDebug, setActiveProgramDebug] = useState("");
   const imageRef = useRef(null);
   const idleRef = useRef(Date.now());
+  const [systemIdleSeconds, setSystemIdleSeconds] = useState(0);
   const driveAutoPullRef = useRef(false);
   const driveLastRemoteModifiedRef = useRef("");
 
@@ -772,7 +803,14 @@ ${info.message}` : "";
   }, []);
 
   useEffect(() => {
-    const mark = () => { idleRef.current = Date.now(); };
+    const mark = () => {
+      const now = Date.now();
+      idleRef.current = now;
+      window.__XL_LAST_LOCAL_INPUT_AT__ = now;
+    };
+
+    mark();
+
     ["mousemove", "mousedown", "keydown", "wheel", "touchstart"].forEach((n) => window.addEventListener(n, mark, { passive: true }));
     return () => ["mousemove", "mousedown", "keydown", "wheel", "touchstart"].forEach((n) => window.removeEventListener(n, mark));
   }, []);
@@ -797,12 +835,16 @@ ${info.message}` : "";
   }, []);
   useEffect(() => {
     const t = setInterval(async () => {
-      const activeProgram = await getActiveProgramName();
+      const [activeProgram, idleSeconds] = await Promise.all([
+        getActiveProgramName(),
+        getSystemIdleSeconds(),
+      ]);
+
       setActiveProgramDebug(activeProgram || "(감지 없음)");
+      setSystemIdleSeconds(idleSeconds);
 
       setState((s) => {
-        const idleMs = Date.now() - idleRef.current;
-        const away = idleMs >= 15000;
+        const away = idleSeconds >= 15;
         const tracked = isTrackedProgram(activeProgram, s.trackedPrograms || []);
 
         if (away) {
@@ -1558,8 +1600,7 @@ ${info.message}` : "";
   }, [state.anniversaries, days, todayKey]);
 
   const activeProgramName = activeProgramDebug;
-  const idleMsNow = Date.now() - idleRef.current;
-  const isAwayNow = idleMsNow >= 15000;
+  const isAwayNow = systemIdleSeconds >= 15;
   const isTrackedNow = isTrackedProgram(activeProgramName, state.trackedPrograms || []);
 
   const activeImageSlot = state.fixedImageMode
