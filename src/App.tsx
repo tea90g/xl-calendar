@@ -1929,7 +1929,7 @@ function MobileCalendar({
              
               onClick={() => { setActiveDate(key); if (pendingAction) applyPendingAction(key); }}
               className={cx(
-                "relative min-h-[68px] border-b border-r border-[#efefef] bg-white p-[5px] pt-[7px] text-left align-top last:border-r-0",
+                "relative min-h-[74px] border-b border-r border-[#efefef] bg-white p-[5px] pt-[7px] text-left align-top last:border-r-0",
                 isActive && "bg-[#fff7f8] ring-2 ring-[#ffdfe6] ring-inset"
               )}
             >
@@ -1947,7 +1947,7 @@ function MobileCalendar({
                 ))}
               </div>
 
-              <div className="mt-[16px] space-y-[2px]">
+              <div className="absolute left-[5px] right-[5px] top-[29px] z-[1] space-y-[2px]">
                 {events
                   .map((ev) => ev.isContinuousPlaceholder ? ev.continuousTarget : ev)
                   .filter((ev) => ev && !ev.isContinuousPlaceholder)
