@@ -1945,11 +1945,11 @@ function MobileCalendar({
                 ))}
               </div>
 
-              <div className="mt-[28px] space-y-[2px]">
+              <div className="mt-[22px] space-y-[2px]">
                 {events.slice(0, 2).map((ev) => (
                   <div
                     key={ev.id}
-                    className="flex items-center justify-between rounded-[6px] px-[5px] py-[4px] text-[9px] font-[700] text-[#333] shadow-[0_2px_5px_rgba(82,68,58,0.08)]"
+                    className="flex min-h-[17px] items-center justify-between rounded-[6px] px-[5px] py-[3px] text-[9px] font-[700] leading-none text-[#333] shadow-[0_2px_5px_rgba(82,68,58,0.08)]"
                     style={{ backgroundColor: cat(ev.categoryId).color }}
                   >
                     <span className="h-[6px] w-[18px] rounded-full bg-white/55" />
