@@ -1927,11 +1927,11 @@ function MobileCalendar({
              
               onClick={() => { setActiveDate(key); if (pendingAction) applyPendingAction(key); }}
               className={cx(
-                "min-h-[74px] border-b border-r border-[#efefef] bg-white p-[5px] pt-[7px] text-left align-top last:border-r-0",
+                "relative min-h-[74px] border-b border-r border-[#efefef] bg-white p-[5px] pt-[7px] text-left align-top last:border-r-0",
                 isActive && "bg-[#fff7f8] ring-2 ring-[#ffdfe6] ring-inset"
               )}
             >
-              <div className="flex items-start gap-[3px]" title={[holidayTitle, anniversaryTitle].filter(Boolean).join("\n") || undefined}>
+              <div className="absolute left-[9px] top-[9px] z-[2] flex items-start gap-[3px]" title={[holidayTitle, anniversaryTitle].filter(Boolean).join("\n") || undefined}>
                 <div className={`text-[12px] font-[600] ${!d.current ? "text-[#c9cfd3]" : meta?.kr?.length ? "text-[#FF8DA1]" : meta?.jp?.length ? "text-[#7EA6FF]" : d.dow === 0 ? "text-[#FF8DA1]" : d.dow === 6 ? "text-[#7EA6FF]" : "text-[#222]"}`}>{d.day}</div>
                 {meta?.kr?.length ? <span className="h-[5px] w-[5px] rounded-full bg-[#FFB6C3]" /> : meta?.jp?.length ? <span className="h-[5px] w-[5px] rounded-full bg-[#9AB9FF]" /> : null}
                 {anniversaryMarks.slice(0, 2).map((mark, index) => (
@@ -1945,7 +1945,7 @@ function MobileCalendar({
                 ))}
               </div>
 
-              <div className="mt-[3px] space-y-[2px]">
+              <div className="mt-[28px] space-y-[2px]">
                 {events.slice(0, 2).map((ev) => (
                   <div
                     key={ev.id}
