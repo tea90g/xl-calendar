@@ -175,6 +175,7 @@ function starterState() {
     updateLastCheckedAt: "",
     updateDismissedVersion: "",
     autoLaunchOnStartup: false,
+    displayOrderOverrides: {},
   };
 }
 
@@ -372,7 +373,7 @@ function repeatCopies(event, year, month) {
     if (excluded.includes(key)) continue;
     const d = new Date(`${key}T00:00:00`);
     if (d.getFullYear() === year && d.getMonth() + 1 === month) {
-      list.push({ ...event, id: `gen-${event.id}-${key}`, baseEventId: event.id, baseRepeatId: event.baseRepeatId || event.id, date: key, isGenerated: true });
+      list.push({ ...event, id: `gen-${event.id}-${key}`, _displayId: `gen-${event.id}-${key}`, baseEventId: event.id, baseRepeatId: event.baseRepeatId || event.id, date: key, isGenerated: true });
     }
   }
   return list;
@@ -398,6 +399,20 @@ function isNextDateKey(a, b) {
   return addDays(a, 1) === b;
 }
 
+function getDisplayId(ev) {
+  if (!ev) return "";
+  if (ev._displayId) return ev._displayId;
+  if (ev.isGenerated && ev.baseEventId && ev.date) return `gen-${ev.baseEventId}-${ev.date}`;
+  if (ev.baseEventId && ev.date) return `gen-${ev.baseEventId}-${ev.date}`;
+  return String(ev.id || "");
+}
+
+function getDisplayOrder(overrides, date, ev) {
+  const id = getDisplayId(ev);
+  const value = overrides?.[date]?.[id];
+  return Number.isFinite(Number(value)) ? Number(value) : null;
+}
+
 function sortEvent(a, b) {
   const al = Number.isFinite(Number(a._displayLane)) ? Number(a._displayLane) : null;
   const bl = Number.isFinite(Number(b._displayLane)) ? Number(b._displayLane) : null;
@@ -408,8 +423,8 @@ function sortEvent(a, b) {
   }
   if (a.isContinuousPlaceholder && !b.isContinuousPlaceholder) return -1;
   if (!a.isContinuousPlaceholder && b.isContinuousPlaceholder) return 1;
-  if (a.isRoutine && !b.isRoutine) return -1;
-  if (!a.isRoutine && b.isRoutine) return 1;
+  if (a.isRoutine && !b.isRoutine) return 1;
+  if (!a.isRoutine && b.isRoutine) return -1;
   const ao = Number.isFinite(Number(a.sortOrder)) ? Number(a.sortOrder) : 9999;
   const bo = Number.isFinite(Number(b.sortOrder)) ? Number(b.sortOrder) : 9999;
   if (ao !== bo) return ao - bo;
@@ -484,7 +499,7 @@ export default function App() {
     }, 250);
 
     return () => window.clearTimeout(timer);
-  }, [state.events, state.todos, state.routineDoneByMonth, state.categories, state.image, state.anniversaries, state.showAnniversaryPanel, state.timerImages, state.selectedImageSlot, state.fixedImageMode, state.showJapanHolidays, state.showFixedList, state.showTodayList, state.showTimerBar, state.searchText, state.filterCategoryId, state.year, state.month]);
+  }, [state.events, state.displayOrderOverrides, state.todos, state.routineDoneByMonth, state.categories, state.image, state.anniversaries, state.showAnniversaryPanel, state.timerImages, state.selectedImageSlot, state.fixedImageMode, state.showJapanHolidays, state.showFixedList, state.showTodayList, state.showTimerBar, state.searchText, state.filterCategoryId, state.year, state.month]);
 
   useEffect(() => {
     if (todayTodoCleanupRef.current) return;
@@ -691,6 +706,7 @@ export default function App() {
 
   const syncPayload = useMemo(() => JSON.stringify({
     events: state.events,
+    displayOrderOverrides: state.displayOrderOverrides,
     todos: state.todos,
     routineDoneByMonth: state.routineDoneByMonth,
     categories: state.categories,
@@ -707,7 +723,7 @@ export default function App() {
     filterCategoryId: state.filterCategoryId,
     year: state.year,
     month: state.month,
-  }), [state.events, state.todos, state.routineDoneByMonth, state.categories, state.image, state.anniversaries, state.showAnniversaryPanel, state.timerImages, state.selectedImageSlot, state.fixedImageMode, state.showJapanHolidays, state.showFixedList, state.showTodayList, state.showTimerBar, state.filterCategoryId, state.year, state.month]);
+  }), [state.events, state.todos, state.routineDoneByMonth, state.categories, state.image, state.anniversaries, state.showAnniversaryPanel, state.timerImages, state.selectedImageSlot, state.fixedImageMode, state.showJapanHolidays, state.showFixedList, state.showTodayList, state.showTimerBar, state.filterCategoryId, state.year, state.month, state.displayOrderOverrides]);
 
   useEffect(() => {
     if (!state.driveAutoSync || !driveToken) return;
@@ -945,9 +961,27 @@ ${info.message}` : "";
     const occupied = new Map();
     const visibleDateKeys = new Set(days.map((d) => d.key));
     const dayMeta = new Map(days.map((d) => [d.key, d]));
-    const normalEvents = visibleEvents.filter((ev) => !ev.isHoliday);
+    const orderOverrides = state.displayOrderOverrides || {};
+    const normalEvents = visibleEvents
+      .filter((ev) => !ev.isHoliday)
+      .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")) || sortEvent(a, b));
     const grouped = new Map();
     const consumedIds = new Set();
+
+    const sortForDate = (date, list) => {
+      return [...list].sort((a, b) => {
+        const ao = getDisplayOrder(orderOverrides, date, a);
+        const bo = getDisplayOrder(orderOverrides, date, b);
+
+        if (ao !== null || bo !== null) {
+          if (ao === null) return 1;
+          if (bo === null) return -1;
+          if (ao !== bo) return ao - bo;
+        }
+
+        return sortEvent(a, b);
+      });
+    };
 
     const getOccupied = (date) => {
       if (!occupied.has(date)) occupied.set(date, new Set());
@@ -1000,9 +1034,11 @@ ${info.message}` : "";
             const chunkDates = chunkEvents.map((item) => item.date);
             const chunkEnd = chunkEvents[chunkEvents.length - 1];
             const lane = reserveLane(chunkDates);
+            const displayId = getDisplayId(chunkStart);
 
             const displayEvent = {
               ...chunkStart,
+              _displayId: displayId,
               _displayLane: lane,
               continuousSpan: chunkLength,
               continuesFromPrev: cursor > 0,
@@ -1011,6 +1047,7 @@ ${info.message}` : "";
               continuousEndDate: chunkEnd.date,
               continuousItems: chunkEvents.map((item) => ({
                 id: item.id,
+                _displayId: getDisplayId(item),
                 date: item.date,
                 title: item.title,
                 startTime: item.startTime,
@@ -1032,13 +1069,15 @@ ${info.message}` : "";
             chunkEvents.slice(1).forEach((item) => {
               pushDisplay(item.date, {
                 id: `placeholder-${displayEvent.id || chunkStart.id}-${item.date}-${lane}`,
+                _displayId: getDisplayId(item),
                 date: item.date,
                 _displayLane: lane,
                 isContinuousPlaceholder: true,
                 isContinuousHitbox: true,
-                continuousTarget: item,
+                continuousTarget: { ...item, _displayId: getDisplayId(item) },
                 continuousItems: chunkEvents.map((entry) => ({
                   id: entry.id,
+                  _displayId: getDisplayId(entry),
                   date: entry.date,
                   title: entry.title,
                   startTime: entry.startTime,
@@ -1068,7 +1107,7 @@ ${info.message}` : "";
     normalEvents.forEach((ev) => {
       if (consumedIds.has(ev.id)) return;
       const lane = reserveLane([ev.date]);
-      pushDisplay(ev.date, { ...ev, _displayLane: lane });
+      pushDisplay(ev.date, { ...ev, _displayId: getDisplayId(ev), _displayLane: lane });
     });
 
     for (const date of visibleDateKeys) {
@@ -1088,9 +1127,9 @@ ${info.message}` : "";
       }
     }
 
-    for (const [date, list] of map.entries()) map.set(date, [...list].sort(sortEvent));
+    for (const [date, list] of map.entries()) map.set(date, sortForDate(date, list));
     return map;
-  }, [visibleEvents, days]);
+  }, [visibleEvents, days, state.displayOrderOverrides]);
 
   function goMonth(delta) {
     setState((s) => {
@@ -1335,7 +1374,7 @@ ${info.message}` : "";
     setSelectedDate(null);
     setEditingEvent(null);
   }
-  function moveEvent(ev, date, clone = false, beforeId = null) {
+  function moveEvent(ev, date, clone = false, beforeTarget = null) {
     if (ev.isRoutine || ev.isHoliday) return;
     pushHistory();
     setState((s) => {
@@ -1379,13 +1418,30 @@ ${info.message}` : "";
         nextEvents = nextEvents.map((e) => e.id === sourceId ? { ...e, cloneGroupId: groupRoot } : e);
       }
 
-      const sameDate = nextEvents.filter((e) => e.date === date && !e.isHoliday && !e.isRoutine && e.id !== moved.id).sort(sortEvent);
-      const insertAt = beforeId ? Math.max(0, sameDate.findIndex((e) => e.id === beforeId || `gen-${e.id}-${date}` === beforeId)) : sameDate.length;
+      const beforeId = typeof beforeTarget === "string" ? beforeTarget : beforeTarget?._displayId || beforeTarget?.id;
+      const movedDisplayId = getDisplayId(moved);
+      const sameDate = (byDate.get(date) || [])
+        .map((item) => item.isContinuousPlaceholder ? item.continuousTarget : item)
+        .filter((item) => item && !item.isHoliday && !item.isRoutine && !item.isContinuousPlaceholder && getDisplayId(item) !== movedDisplayId);
+
       const ordered = [...sameDate];
-      ordered.splice(insertAt < 0 ? sameDate.length : insertAt, 0, moved);
-      const orderMap = new Map(ordered.map((e, i) => [e.id, i]));
-      nextEvents = nextEvents.map((e) => e.date === date && orderMap.has(e.id) ? { ...e, sortOrder: orderMap.get(e.id) } : e);
-      return { ...s, events: nextEvents };
+      const beforeIndex = beforeId ? ordered.findIndex((item) => getDisplayId(item) === beforeId || item.id === beforeId) : -1;
+      ordered.splice(beforeId && beforeIndex >= 0 ? beforeIndex : ordered.length, 0, { ...moved, _displayId: movedDisplayId });
+
+      const nextOverride = {};
+      ordered.forEach((item, index) => {
+        const id = getDisplayId(item);
+        if (id) nextOverride[id] = index;
+      });
+
+      return {
+        ...s,
+        events: nextEvents,
+        displayOrderOverrides: {
+          ...(s.displayOrderOverrides || {}),
+          [date]: nextOverride,
+        },
+      };
     });
   }
   function loadImage(file, slot = null) {
@@ -2136,7 +2192,7 @@ function DayCell({ d, events, holidayMeta, anniversaryMarks = [], cat, hoverDate
       type="button"
       aria-label="이어진 일정 수정"
       title="이어진 일정 수정"
-      className="relative z-[40] h-[31px] w-full shrink-0 cursor-pointer rounded-[10px] bg-transparent hover:bg-black/[0.015]"
+      className="relative z-[5] h-[31px] w-full shrink-0 cursor-pointer rounded-[10px] bg-transparent hover:bg-black/[0.015]"
       onClick={(e) => {
         e.stopPropagation();
         if (ev.continuousTarget) {
@@ -2152,7 +2208,7 @@ function DayCell({ d, events, holidayMeta, anniversaryMarks = [], cat, hoverDate
         e.stopPropagation();
         const raw = e.dataTransfer.getData("text/plain");
         if (raw && ev.continuousTarget) {
-          moveEvent(JSON.parse(raw), d.key, copyMode, ev.continuousTarget.id);
+          moveEvent(JSON.parse(raw), d.key, copyMode, ev.continuousTarget);
         }
         setDragging(null);
         setHoverDate(null);
@@ -2162,7 +2218,7 @@ function DayCell({ d, events, holidayMeta, anniversaryMarks = [], cat, hoverDate
   ) : (
     <div key={ev.id} className="pointer-events-none h-[31px] shrink-0" />
   )
-) : ev.isRoutine ? <RoutineCard key={ev.id} ev={ev} setState={setState} routineMonthKey={routineMonthKey} dim={!d.current} /> : <EventCard key={ev.id} ev={ev} index={index} dim={!d.current} cat={cat(ev.categoryId)} dragging={dragging?.id === ev.id} onEdit={(target) => openEdit(target || ev)} onDragStart={(e) => { if (ev.isHoliday) return e.preventDefault(); const dragTarget = Array.isArray(ev.continuousItems) && ev.continuousItems.length ? ev.continuousItems[0] : ev; setDragging(dragTarget); setCopyMode(e.altKey || e.ctrlKey || e.metaKey); e.dataTransfer.setData("text/plain", JSON.stringify(dragTarget)); }} onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); const raw = e.dataTransfer.getData("text/plain"); if (raw) moveEvent(JSON.parse(raw), d.key, copyMode, ev.id); setDragging(null); setHoverDate(null); setCopyMode(false); }} onDragEnd={() => { setDragging(null); setHoverDate(null); setCopyMode(false); }} />)}{events.length > 5 && <button className="mt-[2px] text-[8px] font-bold text-[#aaa]" onClick={() => alert(events.map((e) => e.title).join("\n"))}>+{events.length - 5}</button>}</div>
+) : ev.isRoutine ? <RoutineCard key={ev.id} ev={ev} setState={setState} routineMonthKey={routineMonthKey} dim={!d.current} /> : <EventCard key={ev.id} ev={ev} index={index} dim={!d.current} cat={cat(ev.categoryId)} dragging={dragging?.id === ev.id} onEdit={(target) => openEdit(target || ev)} onDragStart={(e) => { if (ev.isHoliday) return e.preventDefault(); const dragTarget = Array.isArray(ev.continuousItems) && ev.continuousItems.length ? ev.continuousItems[0] : ev; setDragging(dragTarget); setCopyMode(e.altKey || e.ctrlKey || e.metaKey); e.dataTransfer.setData("text/plain", JSON.stringify(dragTarget)); }} onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); const raw = e.dataTransfer.getData("text/plain"); if (raw) moveEvent(JSON.parse(raw), d.key, copyMode, ev); setDragging(null); setHoverDate(null); setCopyMode(false); }} onDragEnd={() => { setDragging(null); setHoverDate(null); setCopyMode(false); }} />)}{events.length > 5 && <button className="mt-[2px] text-[8px] font-bold text-[#aaa]" onClick={() => alert(events.map((e) => e.title).join("\n"))}>+{events.length - 5}</button>}</div>
   </div>;
 }
 
