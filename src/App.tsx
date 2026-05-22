@@ -1736,17 +1736,30 @@ ${info.message}` : "";
           <MonthTabs state={state} setState={setState} jumpMonth={jumpMonth} />
           {state.showTimerBar && <TimerBar state={state} setState={setState} focusRatio={focusRatio} />}
 
-          <button
-            type="button"
-            onClick={() => window.open("https://x.com/murmurxl", "_blank", "noopener,noreferrer")}
-            className="absolute bottom-[10px] right-[18px] z-[3] select-none text-[10px] tracking-[0.08em] text-[#cfcac5] transition hover:text-[#aaa39d]"
+          <div
+            className="absolute bottom-[10px] right-[18px] z-[3] flex select-none items-center gap-[10px] text-[10px] tracking-[0.08em] text-[#cfcac5]"
             style={{
               fontFamily: '"SF Pro Display","Avenir Next","Pretendard",sans-serif',
               letterSpacing: "0.09em",
             }}
           >
-            — XL Calendar
-          </button>
+            <button
+              type="button"
+              onClick={() => window.open("https://x.com/murmurxl", "_blank", "noopener,noreferrer")}
+              className="transition hover:text-[#aaa39d]"
+            >
+              — XL Calendar
+            </button>
+
+            <a
+              href="/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="transition hover:text-[#aaa39d]"
+            >
+              Privacy Policy
+            </a>
+          </div>
         </main>
       </div>
 
