@@ -2337,22 +2337,22 @@ function EventCard({ ev, cat, dragging, onEdit, onDragStart, onDragOver, onDrop,
         <span className="absolute right-[-6px] top-[-4px] z-[8] flex items-center gap-[3px]">
           {hasMemo && (
             <span
-              className="relative inline-flex h-[18px] w-[18px] items-center justify-center rounded-full border border-[#f2cfd8] bg-[#fff6f8] text-[10px] shadow-[0_2px_6px_rgba(214,168,180,0.22)] backdrop-blur-[1px]"
+              className="group/memo relative inline-flex h-[18px] w-[18px] items-center justify-center rounded-full border border-[#f2cfd8] bg-[#fff6f8] text-[10px] shadow-[0_2px_6px_rgba(214,168,180,0.22)] backdrop-blur-[1px]"
               onClick={(e) => e.stopPropagation()}
             >
               <MemoIcon size={10} />
-              <span className="pointer-events-none absolute right-0 top-[22px] z-[60] hidden w-max max-w-[190px] rounded-[8px] border border-[#e6e0da] bg-white px-3 py-2 text-left text-[11px] font-[600] leading-[1.45] text-[#544b44] shadow-[0_8px_20px_rgba(52,40,34,0.16)] group-hover:inline-block">
+              <span className="pointer-events-none absolute right-0 top-[22px] z-[80] hidden w-max max-w-[190px] rounded-[8px] border border-[#e6e0da] bg-white px-3 py-2 text-left text-[11px] font-[600] leading-[1.45] text-[#544b44] shadow-[0_8px_20px_rgba(52,40,34,0.16)] group-hover/memo:inline-block">
                 {ev.memo}
               </span>
             </span>
           )}
           {hasUrl && (
             <span
-              className="relative inline-flex h-[18px] w-[18px] items-center justify-center rounded-full border border-[#d9d2f4] bg-[#f8f6ff] text-[10px] shadow-[0_2px_6px_rgba(170,160,220,0.22)] backdrop-blur-[1px]"
+              className="group/link relative inline-flex h-[18px] w-[18px] items-center justify-center rounded-full border border-[#d9d2f4] bg-[#f8f6ff] text-[10px] shadow-[0_2px_6px_rgba(170,160,220,0.22)] backdrop-blur-[1px]"
               onClick={(e) => { e.stopPropagation(); window.open(normalizedUrl, "_blank", "noopener,noreferrer"); }}
             >
               <LinkIcon size={10} />
-              <span className="pointer-events-none absolute right-0 top-[22px] z-[60] hidden max-w-[220px] truncate rounded-[8px] border border-[#e6e0da] bg-white px-3 py-2 text-left text-[11px] font-[600] leading-[1.45] text-[#544b44] shadow-[0_8px_20px_rgba(52,40,34,0.16)] group-hover:inline-block">
+              <span className="pointer-events-none absolute right-0 top-[22px] z-[80] hidden max-w-[220px] truncate rounded-[8px] border border-[#e6e0da] bg-white px-3 py-2 text-left text-[11px] font-[600] leading-[1.45] text-[#544b44] shadow-[0_8px_20px_rgba(52,40,34,0.16)] group-hover/link:inline-block">
                 {ev.url}
               </span>
             </span>
@@ -2590,12 +2590,16 @@ function GuideModal({ onClose }) {
   const clientIdGuideUrl = "https://docs.google.com/document/d/10gnHLosLskc2E8M4PRku04PcnttYH1uINTqlOgrQGYo/edit?usp=sharing";
   const sections = [
     {
-      title: "일정 복제",
-      body: "Ctrl / Alt 를 누른 상태로 드래그하면 일정이 복제돼요. 일반 드래그는 이동이에요.",
+      title: "캘린더 조작",
+      body: "빈 날짜칸을 더블클릭하면 일정을 빠르게 생성할 수 있어요.\n일정 카드는 드래그해서 날짜 이동 또는 같은 날짜 안의 순서 변경이 가능해요.\nCtrl / Alt 를 누른 상태로 드래그하면 일정이 복제돼요. 일반 드래그는 이동이에요.\n공휴일 / 메모 / 링크 마크가 있는 일정 위에 마우스를 올리면 자세한 내용이 박스로 표시돼요.",
     },
     {
       title: "반복 일정",
       body: "매주 / 매월 반복 설정 가능. 반복 일정 수정 시 전체 수정 버튼으로 그룹 전체를 수정할 수 있어요.",
+    },
+    {
+      title: "MY LIST",
+      body: "MY LIST · 고정: 한 번 등록한 내용이 매 월 생겨요.\nMY LIST · 해야 할 일: 체크한 내용은 앱을 재부팅하면 자동으로 삭제돼요.",
     },
     {
       title: "상태 이미지",
@@ -2618,10 +2622,6 @@ function GuideModal({ onClose }) {
       title: "작업 추적",
       body: "설정 → 실행중 선택 버튼으로 프로그램 등록 가능. 등록된 프로그램 사용 시 작업 시간으로 측정돼요.",
     },
-    {
-      title: "캘린더 조작",
-      body: "일정 더블클릭으로 빠른 생성 가능. 일정끼리 드래그해서 순서 변경도 가능해요. 공휴일 / 메모 / 링크 마크가 있는 일정 위에 마우스를 올리면 자세한 내용이 박스로 표시돼요.",
-    },
   ];
 
   return <Modal size="w-[480px]"><ModalHead sub="calendar usage" onClose={onClose} /><div className="max-h-[74vh] overflow-y-auto p-5"><div className="space-y-3">{sections.map((section) => <div key={section.title} className="rounded-[14px] border border-[#ececec] bg-white px-4 py-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)]"><div className="mb-[7px] text-[14px] font-[900] tracking-[-0.02em] text-[#444]">{section.title}</div><div className="whitespace-pre-line text-[12px] font-[600] leading-[1.65] tracking-[-0.012em] text-[#777]">{section.body}</div>{section.detail && <div className="mt-3"><button onClick={() => window.open(clientIdGuideUrl, "_blank", "noopener,noreferrer")} className="rounded-full border border-[#e5e5e5] bg-[#fafafa] px-3 py-[5px] text-[10px] font-[600] tracking-[0.04em] text-[#777]">Client ID 생성 방법 보기</button></div>}</div>)}</div></div></Modal>;
@@ -2634,7 +2634,7 @@ function SettingsModal({state, setState, driveStatus, driveConnected, updateStat
   const [programPickerOpen, setProgramPickerOpen] = useState(false);
   const [autoLaunchStatus, setAutoLaunchStatus] = useState("EXE에서 사용 가능");
   const autoLaunchSupported = typeof window !== "undefined" && Boolean(window.__XL_AUTO_LAUNCH__?.get && window.__XL_AUTO_LAUNCH__?.set);
-  const toggles = [["고정 리스트", "showFixedList"], ["오늘 리스트", "showTodayList"], ["타이머 바", "showTimerBar"], ["디데이", "showAnniversaryPanel"], ["일본 祝日", "showJapanHolidays"], ["재부팅 자동시작", "autoLaunch"]];
+  const toggles = [["고정 리스트", "showFixedList"], ["투두 리스트", "showTodayList"], ["타이머 바", "showTimerBar"], ["디데이", "showAnniversaryPanel"], ["일본 祝日", "showJapanHolidays"], ["재부팅 자동시작", "autoLaunch"]];
 
   useEffect(() => {
     let cancelled = false;
