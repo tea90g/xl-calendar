@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, shell, powerMonitor } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, shell, powerMonitor, screen } = require("electron");
 const path = require("path");
 const http = require("http");
 const https = require("https");
@@ -579,12 +579,79 @@ async function getActiveProgramDetail() {
 }
 
 
+
+function getWindowStatePath() {
+  return path.join(app.getPath("userData"), "window-state.json");
+}
+
+function readWindowState() {
+  try {
+    const raw = fs.readFileSync(getWindowStatePath(), "utf-8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+
+    const width = Math.max(1180, Number(parsed.width) || 1500);
+    const height = Math.max(720, Number(parsed.height) || 980);
+    const x = Number.isFinite(Number(parsed.x)) ? Number(parsed.x) : undefined;
+    const y = Number.isFinite(Number(parsed.y)) ? Number(parsed.y) : undefined;
+
+    const bounds = { width, height };
+    if (x !== undefined && y !== undefined) {
+      const displays = screen.getAllDisplays();
+      const visible = displays.some((display) => {
+        const area = display.workArea;
+        return (
+          x + 80 >= area.x &&
+          y + 80 >= area.y &&
+          x <= area.x + area.width - 80 &&
+          y <= area.y + area.height - 80
+        );
+      });
+
+      if (visible) {
+        bounds.x = x;
+        bounds.y = y;
+      }
+    }
+
+    return {
+      bounds,
+      isMaximized: Boolean(parsed.isMaximized),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveWindowState(win) {
+  if (!win || win.isDestroyed()) return;
+
+  try {
+    const bounds = win.getNormalBounds ? win.getNormalBounds() : win.getBounds();
+    const payload = {
+      ...bounds,
+      isMaximized: win.isMaximized(),
+      savedAt: new Date().toISOString(),
+    };
+
+    fs.mkdirSync(path.dirname(getWindowStatePath()), { recursive: true });
+    fs.writeFileSync(getWindowStatePath(), JSON.stringify(payload, null, 2), "utf-8");
+  } catch (err) {
+    console.error("[XL Calendar] save window state failed:", err);
+  }
+}
+
 function createWindow() {
   Menu.setApplicationMenu(null);
 
+  const savedWindowState = readWindowState();
+  const savedBounds = savedWindowState?.bounds || {};
+
   const win = new BrowserWindow({
-    width: 1500,
-    height: 980,
+    width: savedBounds.width || 1500,
+    height: savedBounds.height || 980,
+    x: savedBounds.x,
+    y: savedBounds.y,
     minWidth: 1180,
     minHeight: 720,
     backgroundColor: "#f4f4f4",
@@ -607,6 +674,22 @@ function createWindow() {
       sandbox: false,
     },
   });
+
+  if (savedWindowState?.isMaximized) {
+    win.maximize();
+  }
+
+  let windowStateTimer = null;
+  const queueSaveWindowState = () => {
+    if (windowStateTimer) clearTimeout(windowStateTimer);
+    windowStateTimer = setTimeout(() => saveWindowState(win), 250);
+  };
+
+  win.on("resize", queueSaveWindowState);
+  win.on("move", queueSaveWindowState);
+  win.on("maximize", queueSaveWindowState);
+  win.on("unmaximize", queueSaveWindowState);
+  win.on("close", () => saveWindowState(win));
 
   if (isDev) {
     win.loadURL("http://localhost:5173");
