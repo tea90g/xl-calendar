@@ -1,6 +1,6 @@
 {
   "name": "xl-calendar",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "XL Calendar - React + Electron Windows desktop app",
   "main": "electron/main.cjs",
@@ -13,6 +13,7 @@
   "dependencies": {
     "@vitejs/plugin-react": "latest",
     "active-win": "^8.2.1",
+    "electron-updater": "^6.8.3",
     "lucide-react": "latest",
     "ps-list": "^9.0.0",
     "react": "latest",
@@ -53,6 +54,13 @@
       "shortcutName": "XL Calendar",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "tea90g",
+        "repo": "xl-calendar-update"
+      }
+    ]
   }
 }

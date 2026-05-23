@@ -3,6 +3,7 @@ const path = require("path");
 const http = require("http");
 const https = require("https");
 const crypto = require("crypto");
+const { autoUpdater } = require("electron-updater");
 
 const MAX_BACKUPS = 7;
 
@@ -641,6 +642,85 @@ function saveWindowState(win) {
   }
 }
 
+
+function setupAutoUpdater(win) {
+  if (isDev || !win || win.isDestroyed()) return;
+
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+
+  const sendStatus = (message) => {
+    try {
+      win.webContents.send("xl:update-status", message);
+    } catch {}
+  };
+
+  autoUpdater.on("checking-for-update", () => {
+    sendStatus("업데이트 확인 중...");
+  });
+
+  autoUpdater.on("update-available", (info) => {
+    const version = info?.version || "";
+    sendStatus(`새 버전 ${version} 있음`);
+
+    const choice = require("electron").dialog.showMessageBoxSync(win, {
+      type: "info",
+      buttons: ["나중에", "업데이트"],
+      defaultId: 1,
+      cancelId: 0,
+      title: "XL Calendar 업데이트",
+      message: version ? `새 버전 ${version}이 있습니다.` : "새 버전이 있습니다.",
+      detail: "지금 다운로드할까요?",
+    });
+
+    if (choice === 1) {
+      sendStatus(`새 버전 ${version} 다운로드 중...`);
+      autoUpdater.downloadUpdate().catch((err) => {
+        sendStatus(`업데이트 다운로드 실패: ${err?.message || "알 수 없는 오류"}`);
+      });
+    } else {
+      sendStatus("업데이트를 나중에 진행합니다.");
+    }
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    sendStatus("최신 버전이에요.");
+  });
+
+  autoUpdater.on("error", (err) => {
+    sendStatus(`업데이트 확인 실패: ${err?.message || "알 수 없는 오류"}`);
+  });
+
+  autoUpdater.on("download-progress", (progress) => {
+    const percent = Math.round(progress?.percent || 0);
+    sendStatus(`업데이트 다운로드 중... ${percent}%`);
+  });
+
+  autoUpdater.on("update-downloaded", (info) => {
+    sendStatus(`새 버전 ${info?.version || ""} 다운로드 완료`);
+
+    const choice = require("electron").dialog.showMessageBoxSync(win, {
+      type: "info",
+      buttons: ["나중에", "지금 재시작"],
+      defaultId: 1,
+      cancelId: 0,
+      title: "XL Calendar 업데이트",
+      message: "새 버전 다운로드가 완료되었습니다.",
+      detail: "앱을 재시작하면 업데이트가 적용됩니다.",
+    });
+
+    if (choice === 1) {
+      autoUpdater.quitAndInstall(false, true);
+    }
+  });
+
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch((err) => {
+      sendStatus(`업데이트 확인 실패: ${err?.message || "알 수 없는 오류"}`);
+    });
+  }, 3000);
+}
+
 function createWindow() {
   Menu.setApplicationMenu(null);
 
@@ -724,7 +804,20 @@ function createWindow() {
       }
     `).catch(() => {});
   });
+
+  setupAutoUpdater(win);
 }
+
+ipcMain.handle("xl:check-for-updates", async () => {
+  if (isDev) return { ok: false, message: "개발 모드에서는 업데이트 확인을 건너뜁니다." };
+
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return { ok: true, updateInfo: result?.updateInfo || null };
+  } catch (err) {
+    return { ok: false, message: err?.message || "업데이트 확인 실패" };
+  }
+});
 
 ipcMain.handle("xl:get-system-idle-time", () => {
   return powerMonitor.getSystemIdleTime();
