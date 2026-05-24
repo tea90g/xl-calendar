@@ -643,6 +643,30 @@ function saveWindowState(win) {
 }
 
 
+
+function formatUpdateReleaseNotes(info) {
+  const rawNotes = info?.releaseNotes || info?.releaseName || "";
+  const notes = Array.isArray(rawNotes)
+    ? rawNotes.map((item) => item?.note || item || "").join("\n")
+    : String(rawNotes || "");
+
+  const cleaned = notes
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<li>/gi, "- ")
+    .replace(/<\/li>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\r/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return cleaned || "업데이트 내역을 확인할 수 없습니다.";
+}
+
 function setupAutoUpdater(win) {
   if (isDev || !win || win.isDestroyed()) return;
 
@@ -661,6 +685,7 @@ function setupAutoUpdater(win) {
 
   autoUpdater.on("update-available", (info) => {
     const version = info?.version || "";
+    const releaseNotes = formatUpdateReleaseNotes(info);
     sendStatus(`새 버전 ${version} 있음`);
 
     const choice = require("electron").dialog.showMessageBoxSync(win, {
@@ -670,7 +695,7 @@ function setupAutoUpdater(win) {
       cancelId: 0,
       title: "XL Calendar 업데이트",
       message: version ? `새 버전 ${version}이 있습니다.` : "새 버전이 있습니다.",
-      detail: "지금 다운로드할까요?",
+      detail: `업데이트 내역:\n\n${releaseNotes}\n\n지금 다운로드할까요?`,
     });
 
     if (choice === 1) {
@@ -697,6 +722,7 @@ function setupAutoUpdater(win) {
   });
 
   autoUpdater.on("update-downloaded", (info) => {
+    const releaseNotes = formatUpdateReleaseNotes(info);
     sendStatus(`새 버전 ${info?.version || ""} 다운로드 완료`);
 
     const choice = require("electron").dialog.showMessageBoxSync(win, {
@@ -706,7 +732,7 @@ function setupAutoUpdater(win) {
       cancelId: 0,
       title: "XL Calendar 업데이트",
       message: "새 버전 다운로드가 완료되었습니다.",
-      detail: "앱을 재시작하면 업데이트가 적용됩니다.",
+      detail: `업데이트 내역:\n\n${releaseNotes}\n\n앱을 재시작하면 업데이트가 적용됩니다.`,
     });
 
     if (choice === 1) {
