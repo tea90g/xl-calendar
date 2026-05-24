@@ -25,9 +25,40 @@ function LinkIcon({ size = 10 }) {
 }
 
 const STORAGE_KEY = "xl-calendar-app-v2-live-functions";
+
+const TIMER_SESSION_KEY = "xl-calendar-session-timers";
+
+function loadSessionTimers() {
+  try {
+    const raw = sessionStorage.getItem(TIMER_SESSION_KEY);
+    if (!raw) return { workSeconds: 0, otherSeconds: 0, awaySeconds: 0 };
+    const parsed = JSON.parse(raw);
+    return {
+      workSeconds: Number(parsed.workSeconds) || 0,
+      otherSeconds: Number(parsed.otherSeconds) || 0,
+      awaySeconds: Number(parsed.awaySeconds) || 0,
+    };
+  } catch {
+    return { workSeconds: 0, otherSeconds: 0, awaySeconds: 0 };
+  }
+}
+
+function saveSessionTimers(state) {
+  try {
+    sessionStorage.setItem(
+      TIMER_SESSION_KEY,
+      JSON.stringify({
+        workSeconds: state.workSeconds || 0,
+        otherSeconds: state.otherSeconds || 0,
+        awaySeconds: state.awaySeconds || 0,
+      })
+    );
+  } catch {}
+}
+
 const DRIVE_FILE_NAME = "xl-calendar-data.json";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
-const APP_VERSION = "1.0.2";
+const APP_VERSION = "1.0.4";
 const DRIVE_TOKEN_STORAGE_KEY = "xl-google-drive-token";
 const DEFAULT_UPDATE_INFO_URL = "https://raw.githubusercontent.com/tea90g/xl-calendar-update/main/latest.json";
 const pad = (n) => String(n).padStart(2, "0");
@@ -187,7 +218,11 @@ function getElectronStateApi() {
 function readState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? { ...starterState(), ...JSON.parse(raw), workSeconds: 0, otherSeconds: 0, awaySeconds: 0 } : starterState();
+    if (raw) {
+      const sessionTimers = loadSessionTimers();
+      return { ...starterState(), ...JSON.parse(raw), ...sessionTimers };
+    }
+    return starterState();
   } catch {
     return starterState();
   }
@@ -501,6 +536,11 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [state.events, state.displayOrderOverrides, state.todos, state.routineDoneByMonth, state.categories, state.image, state.anniversaries, state.showAnniversaryPanel, state.timerImages, state.selectedImageSlot, state.fixedImageMode, state.showJapanHolidays, state.showFixedList, state.showTodayList, state.showTimerBar, state.searchText, state.filterCategoryId, state.year, state.month]);
 
+
+  useEffect(() => {
+    saveSessionTimers(state);
+  }, [state.workSeconds, state.otherSeconds, state.awaySeconds]);
+
   useEffect(() => {
     if (todayTodoCleanupRef.current) return;
     todayTodoCleanupRef.current = true;
@@ -536,12 +576,11 @@ export default function App() {
         const loadedState = loaded?.state || loaded;
 
         if (!cancelled && loadedState && typeof loadedState === "object") {
+          const sessionTimers = loadSessionTimers();
           setState(() => ({
             ...starterState(),
             ...loadedState,
-            workSeconds: 0,
-            otherSeconds: 0,
-            awaySeconds: 0,
+            ...sessionTimers,
           }));
         }
       } catch {

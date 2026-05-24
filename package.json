@@ -1,6 +1,6 @@
 {
   "name": "xl-calendar",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "description": "XL Calendar - React + Electron Windows desktop app",
   "main": "electron/main.cjs",
