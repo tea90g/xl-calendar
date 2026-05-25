@@ -55,7 +55,7 @@ function saveSessionTimers(state) {
 
 const DRIVE_FILE_NAME = "xl-calendar-data.json";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
-const APP_VERSION = "1.0.5";
+const APP_VERSION = "1.0.6";
 const DRIVE_TOKEN_STORAGE_KEY = "xl-google-drive-token";
 const DEFAULT_UPDATE_INFO_URL = "https://raw.githubusercontent.com/tea90g/xl-calendar-update/main/latest.json";
 const pad = (n) => String(n).padStart(2, "0");
@@ -511,6 +511,9 @@ export default function App() {
   const imageRef = useRef(null);
   const idleRef = useRef(Date.now());
   const [systemIdleSeconds, setSystemIdleSeconds] = useState(0);
+  const timerLastTickRef = useRef(Date.now());
+  const trackedProgramsRef = useRef([]);
+  const timerTickBusyRef = useRef(false);
   const driveAutoPullRef = useRef(false);
   const driveLastRemoteModifiedRef = useRef("");
 
@@ -885,42 +888,78 @@ ${info.message}` : "";
     });
   }, []);
   useEffect(() => {
-    const t = setInterval(async () => {
-      const [activeProgram, idleSeconds] = await Promise.all([
-        getActiveProgramName(),
-        getSystemIdleSeconds(),
-      ]);
-
-      setActiveProgramDebug(activeProgram || "(감지 없음)");
-      setSystemIdleSeconds(idleSeconds);
-
-      setState((s) => {
-        const away = idleSeconds >= 15;
-        const tracked = isTrackedProgram(activeProgram, s.trackedPrograms || []);
-
-        if (away) {
-          return {
-            ...s,
-            awaySeconds: s.awaySeconds + 1,
-          };
-        }
-
-        if (tracked) {
-          return {
-            ...s,
-            workSeconds: s.workSeconds + 1,
-          };
-        }
-
-        return {
-          ...s,
-          otherSeconds: s.otherSeconds + 1,
-        };
-      });
-    }, 1000);
-
-    return () => clearInterval(t);
+    trackedProgramsRef.current = state.trackedPrograms || [];
   }, [state.trackedPrograms]);
+
+  useEffect(() => {
+    timerLastTickRef.current = Date.now();
+
+    const tick = async () => {
+      if (timerTickBusyRef.current) return;
+      timerTickBusyRef.current = true;
+
+      try {
+        const now = Date.now();
+        const elapsedSeconds = Math.max(1, Math.floor((now - timerLastTickRef.current) / 1000));
+        timerLastTickRef.current = now;
+
+        const [activeProgram, idleSeconds] = await Promise.all([
+          getActiveProgramName(),
+          getSystemIdleSeconds(),
+        ]);
+
+        setActiveProgramDebug(activeProgram || "(감지 없음)");
+        setSystemIdleSeconds(idleSeconds);
+
+        setState((s) => {
+          const away = idleSeconds >= 15;
+          const tracked = isTrackedProgram(activeProgram, trackedProgramsRef.current || []);
+
+          if (away) {
+            return {
+              ...s,
+              awaySeconds: (s.awaySeconds || 0) + elapsedSeconds,
+            };
+          }
+
+          if (tracked) {
+            return {
+              ...s,
+              workSeconds: (s.workSeconds || 0) + elapsedSeconds,
+            };
+          }
+
+          return {
+            ...s,
+            otherSeconds: (s.otherSeconds || 0) + elapsedSeconds,
+          };
+        });
+      } catch (err) {
+        console.error("[XL Calendar] timer tick failed:", err);
+      } finally {
+        timerTickBusyRef.current = false;
+      }
+    };
+
+    const t = window.setInterval(tick, 1000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+
+    const handleFocus = () => tick();
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleFocus);
+
+    tick();
+
+    return () => {
+      window.clearInterval(t);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, []);
 
   const todayKey = makeDate(new Date().getFullYear(), new Date().getMonth() + 1, new Date().getDate());
   const days = useMemo(() => buildCalendar(state.year, state.month), [state.year, state.month]);
