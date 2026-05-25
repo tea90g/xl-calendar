@@ -667,6 +667,30 @@ function formatUpdateReleaseNotes(info) {
   return cleaned || "업데이트 내역을 확인할 수 없습니다.";
 }
 
+
+function getTimerPreserveFlagPath() {
+  return path.join(app.getPath("userData"), "preserve-session-timers.flag");
+}
+
+function markPreserveSessionTimers() {
+  try {
+    fs.writeFileSync(getTimerPreserveFlagPath(), String(Date.now()), "utf-8");
+  } catch (err) {
+    console.error("[XL Calendar] preserve timer flag failed:", err);
+  }
+}
+
+function consumePreserveSessionTimersFlag() {
+  try {
+    const flagPath = getTimerPreserveFlagPath();
+    if (!fs.existsSync(flagPath)) return false;
+    fs.unlinkSync(flagPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function setupAutoUpdater(win) {
   if (isDev || !win || win.isDestroyed()) return;
 
@@ -736,6 +760,7 @@ function setupAutoUpdater(win) {
     });
 
     if (choice === 1) {
+      markPreserveSessionTimers();
       autoUpdater.quitAndInstall(false, true);
     }
   });
@@ -811,7 +836,22 @@ function createWindow() {
 
   // 프레임리스에 가까운 창에서도 빈 상단을 잡고 드래그할 수 있게 하는 보조 CSS.
   // 앱 버튼/입력칸은 클릭 가능하게 no-drag 처리합니다.
+  let timerSessionInitialized = false;
+
   win.webContents.on("did-finish-load", () => {
+    if (!timerSessionInitialized) {
+      timerSessionInitialized = true;
+      const shouldPreserveTimers = consumePreserveSessionTimersFlag();
+
+      if (!shouldPreserveTimers) {
+        win.webContents.executeJavaScript(`
+          try {
+            localStorage.removeItem("xl-calendar-session-timers");
+          } catch {}
+        `).catch(() => {});
+      }
+    }
+
     win.webContents.insertCSS(`
       html, body, #root { min-height: 100%; overflow: hidden; }
       body::before {
