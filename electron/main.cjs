@@ -551,7 +551,11 @@ async function startGoogleDesktopOAuth({ clientId, clientSecret, scope }) {
 
     const token = await postForm("https://oauth2.googleapis.com/token", tokenPayload);
 
-    return { ok: true, ...token };
+    return {
+      ok: true,
+      ...token,
+      expires_at: Date.now() + ((Number(token.expires_in) || 3600) * 1000),
+    };
   } catch (err) {
     try {
       if (server) server.close();
@@ -559,6 +563,40 @@ async function startGoogleDesktopOAuth({ clientId, clientSecret, scope }) {
     return { ok: false, error: err?.message || "Google 로그인 실패" };
   }
 }
+
+
+async function refreshGoogleDesktopOAuth({ clientId, clientSecret, refreshToken }) {
+  const safeClientId = String(clientId || "").trim();
+  const safeClientSecret = String(clientSecret || "").trim();
+  const safeRefreshToken = String(refreshToken || "").trim();
+
+  if (!safeClientId || !safeRefreshToken) {
+    return { ok: false, error: "Google OAuth 정보가 부족해요." };
+  }
+
+  try {
+    const tokenPayload = {
+      client_id: safeClientId,
+      refresh_token: safeRefreshToken,
+      grant_type: "refresh_token",
+    };
+
+    if (safeClientSecret) {
+      tokenPayload.client_secret = safeClientSecret;
+    }
+
+    const token = await postForm("https://oauth2.googleapis.com/token", tokenPayload);
+
+    return {
+      ok: true,
+      ...token,
+      expires_at: Date.now() + ((Number(token.expires_in) || 3600) * 1000),
+    };
+  } catch (err) {
+    return { ok: false, error: err?.message || "Google 토큰 갱신 실패" };
+  }
+}
+
 
 async function getActiveProgramDetail() {
   try {
@@ -761,7 +799,18 @@ function setupAutoUpdater(win) {
 
     if (choice === 1) {
       markPreserveSessionTimers();
-      autoUpdater.quitAndInstall(false, true);
+
+      try {
+        win.webContents.executeJavaScript(`
+          try {
+            localStorage.setItem("xl-calendar-preserve-timers-on-next-launch", "1");
+          } catch {}
+        `).finally(() => {
+          autoUpdater.quitAndInstall(false, true);
+        });
+      } catch {
+        autoUpdater.quitAndInstall(false, true);
+      }
     }
   });
 
@@ -842,14 +891,6 @@ function createWindow() {
     if (!timerSessionInitialized) {
       timerSessionInitialized = true;
       const shouldPreserveTimers = consumePreserveSessionTimersFlag();
-
-      if (!shouldPreserveTimers) {
-        win.webContents.executeJavaScript(`
-          try {
-            localStorage.removeItem("xl-calendar-session-timers");
-          } catch {}
-        `).catch(() => {});
-      }
     }
 
     win.webContents.insertCSS(`
@@ -894,6 +935,7 @@ ipcMain.handle("xl:get-active-program-detail", async () => getActiveProgramDetai
 ipcMain.handle("xl:capture-active-program", async (_event, durationMs) => captureActiveProgram(durationMs));
 ipcMain.handle("xl:get-running-programs", async () => getRunningPrograms());
 ipcMain.handle("xl:google-auth", async (_event, payload) => startGoogleDesktopOAuth(payload || {}));
+ipcMain.handle("xl:google-refresh", async (_event, payload) => refreshGoogleDesktopOAuth(payload || {}));
 
 ipcMain.handle("xl:load-state", async () => loadStateFromFile());
 

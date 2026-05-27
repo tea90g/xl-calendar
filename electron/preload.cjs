@@ -37,6 +37,15 @@ contextBridge.exposeInMainWorld("__XL_GOOGLE_AUTH__", async (payload) => {
   }
 });
 
+contextBridge.exposeInMainWorld("__XL_GOOGLE_REFRESH__", async (payload) => {
+  try {
+    return await ipcRenderer.invoke("xl:google-refresh", payload);
+  } catch (err) {
+    return { ok: false, error: err?.message || "Google 토큰 갱신 실패" };
+  }
+});
+
+
 
 const autoLaunchApi = {
   get: () => ipcRenderer.invoke("xl:get-auto-launch"),

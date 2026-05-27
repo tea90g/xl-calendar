@@ -27,9 +27,25 @@ function LinkIcon({ size = 10 }) {
 const STORAGE_KEY = "xl-calendar-app-v2-live-functions";
 
 const TIMER_SESSION_KEY = "xl-calendar-session-timers";
+const TIMER_RUNTIME_SESSION_KEY = "xl-calendar-runtime-session-active";
+const TIMER_PRESERVE_NEXT_LAUNCH_KEY = "xl-calendar-preserve-timers-on-next-launch";
 
 function loadSessionTimers() {
   try {
+    const hasRuntimeSession = sessionStorage.getItem(TIMER_RUNTIME_SESSION_KEY) === "1";
+    const preserveNextLaunch = localStorage.getItem(TIMER_PRESERVE_NEXT_LAUNCH_KEY) === "1";
+
+    sessionStorage.setItem(TIMER_RUNTIME_SESSION_KEY, "1");
+
+    if (preserveNextLaunch) {
+      localStorage.removeItem(TIMER_PRESERVE_NEXT_LAUNCH_KEY);
+    }
+
+    if (!hasRuntimeSession && !preserveNextLaunch) {
+      localStorage.removeItem(TIMER_SESSION_KEY);
+      return { workSeconds: 0, otherSeconds: 0, awaySeconds: 0 };
+    }
+
     const raw = localStorage.getItem(TIMER_SESSION_KEY);
     if (!raw) return { workSeconds: 0, otherSeconds: 0, awaySeconds: 0 };
     const parsed = JSON.parse(raw);
@@ -55,8 +71,33 @@ function saveSessionTimers(state) {
 
 const DRIVE_FILE_NAME = "xl-calendar-data.json";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
-const APP_VERSION = "1.0.6";
+const APP_VERSION = "1.0.9";
 const DRIVE_TOKEN_STORAGE_KEY = "xl-google-drive-token";
+const DRIVE_TOKEN_INFO_STORAGE_KEY = "xl-google-drive-token-info";
+
+function readDriveTokenInfo() {
+  try {
+    const raw = localStorage.getItem(DRIVE_TOKEN_INFO_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveDriveTokenInfo(info) {
+  try {
+    if (!info) return;
+    localStorage.setItem(DRIVE_TOKEN_INFO_STORAGE_KEY, JSON.stringify(info));
+    if (info.access_token) localStorage.setItem(DRIVE_TOKEN_STORAGE_KEY, info.access_token);
+  } catch {}
+}
+
+function clearDriveTokenInfo() {
+  try {
+    localStorage.removeItem(DRIVE_TOKEN_INFO_STORAGE_KEY);
+    localStorage.removeItem(DRIVE_TOKEN_STORAGE_KEY);
+  } catch {}
+}
 const DEFAULT_UPDATE_INFO_URL = "https://raw.githubusercontent.com/tea90g/xl-calendar-update/main/latest.json";
 const pad = (n) => String(n).padStart(2, "0");
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -77,7 +118,8 @@ const cx = (...v) => v.filter(Boolean).join(" ");
 
 declare global {
   interface Window {
-    __XL_GOOGLE_AUTH__?: (payload: { clientId: string; clientSecret?: string; scope: string }) => Promise<{ ok?: boolean; access_token?: string; refresh_token?: string; expires_in?: number; token_type?: string; scope?: string; error?: string }>;
+    __XL_GOOGLE_AUTH__?: (payload: { clientId: string; clientSecret?: string; scope: string }) => Promise<{ ok?: boolean; access_token?: string; refresh_token?: string; expires_in?: number; expires_at?: number; token_type?: string; scope?: string; error?: string }>;
+    __XL_GOOGLE_REFRESH__?: (payload: { clientId: string; clientSecret?: string; refreshToken: string }) => Promise<{ ok?: boolean; access_token?: string; expires_in?: number; expires_at?: number; token_type?: string; scope?: string; error?: string }>;
     __XL_GET_ACTIVE_PROGRAM_DETAIL__?: () => Promise<{ processName?: string; title?: string; label?: string }>;
     __XL_STATE__?: {
       saveCalendarState?: (data: unknown) => Promise<void>;
@@ -498,7 +540,8 @@ export default function App() {
   const [copyMode, setCopyMode] = useState(false);
   const [driveToken, setDriveToken] = useState(() => {
     try {
-      return localStorage.getItem(DRIVE_TOKEN_STORAGE_KEY) || null;
+      const info = readDriveTokenInfo();
+      return info?.access_token || localStorage.getItem(DRIVE_TOKEN_STORAGE_KEY) || null;
     } catch {
       return null;
     }
@@ -515,6 +558,8 @@ export default function App() {
   const trackedProgramsRef = useRef([]);
   const timerTickBusyRef = useRef(false);
   const driveAutoPullRef = useRef(false);
+  const driveInitialSyncReadyRef = useRef(false);
+  const driveInitialSyncInProgressRef = useRef(false);
   const driveLastRemoteModifiedRef = useRef("");
 
   useEffect(() => {
@@ -554,10 +599,11 @@ export default function App() {
 
   useEffect(() => {
     try {
-      const savedToken = localStorage.getItem(DRIVE_TOKEN_STORAGE_KEY);
+      const savedInfo = readDriveTokenInfo();
+      const savedToken = savedInfo?.access_token || localStorage.getItem(DRIVE_TOKEN_STORAGE_KEY);
       if (savedToken) {
         setDriveToken(savedToken);
-        setDriveStatus("Google Drive 자동 연결됨");
+        setDriveStatus(savedInfo?.refresh_token ? "Google Drive 자동 연결됨" : "Google Drive 연결됨");
       }
     } catch {}
   }, []);
@@ -636,9 +682,13 @@ export default function App() {
         });
 
         if (res?.ok && res?.access_token) {
-          setDriveToken(res.access_token);
-          try { localStorage.setItem(DRIVE_TOKEN_STORAGE_KEY, res.access_token); } catch {}
-          setDriveStatus("Google Drive 연결됨");
+          const tokenInfo = {
+            ...res,
+            expires_at: res.expires_at || Date.now() + ((Number(res.expires_in) || 3600) * 1000),
+          };
+          saveDriveTokenInfo(tokenInfo);
+          setDriveToken(tokenInfo.access_token);
+          setDriveStatus(tokenInfo.refresh_token ? "Google Drive 자동 연결됨" : "Google Drive 연결됨");
           return;
         }
 
@@ -652,8 +702,15 @@ export default function App() {
         scope: DRIVE_SCOPE,
         callback: (res) => {
           if (res?.access_token) {
-            setDriveToken(res.access_token);
-            try { localStorage.setItem(DRIVE_TOKEN_STORAGE_KEY, res.access_token); } catch {}
+            const tokenInfo = {
+              access_token: res.access_token,
+              expires_in: res.expires_in,
+              expires_at: Date.now() + ((Number(res.expires_in) || 3600) * 1000),
+              token_type: res.token_type,
+              scope: res.scope,
+            };
+            saveDriveTokenInfo(tokenInfo);
+            setDriveToken(tokenInfo.access_token);
             setDriveStatus("Google Drive 연결됨");
           } else {
             setDriveStatus("Google Drive 연결 실패");
@@ -666,12 +723,64 @@ export default function App() {
     }
   }
 
-  async function driveRequest(path, options = {}) {
-    if (!driveToken) throw new Error("Google Drive가 연결되어 있지 않아요.");
-    const res = await fetch(`https://www.googleapis.com/drive/v3${path}`, {
-      ...options,
-      headers: { Authorization: `Bearer ${driveToken}`, ...(options.headers || {}) },
+  async function refreshGoogleDriveTokenIfNeeded({ force = false } = {}) {
+    const info = readDriveTokenInfo();
+    const clientId = String(state.driveClientId || "").trim();
+    const clientSecret = String(state.driveClientSecret || "").trim();
+
+    if (!info?.refresh_token || !clientId || typeof window.__XL_GOOGLE_REFRESH__ !== "function") {
+      return info?.access_token || driveToken || null;
+    }
+
+    const expiresAt = Number(info.expires_at || 0);
+    const stillFresh = expiresAt && Date.now() < expiresAt - 5 * 60 * 1000;
+
+    if (!force && info.access_token && stillFresh) {
+      if (info.access_token !== driveToken) setDriveToken(info.access_token);
+      return info.access_token;
+    }
+
+    const refreshed = await window.__XL_GOOGLE_REFRESH__({
+      clientId,
+      clientSecret,
+      refreshToken: info.refresh_token,
     });
+
+    if (refreshed?.ok && refreshed.access_token) {
+      const nextInfo = {
+        ...info,
+        ...refreshed,
+        refresh_token: info.refresh_token,
+        expires_at: refreshed.expires_at || Date.now() + ((Number(refreshed.expires_in) || 3600) * 1000),
+      };
+      saveDriveTokenInfo(nextInfo);
+      setDriveToken(nextInfo.access_token);
+      setDriveStatus("Google Drive 자동 연결됨");
+      return nextInfo.access_token;
+    }
+
+    throw new Error(refreshed?.error || "Google Drive 토큰 갱신 실패");
+  }
+
+  async function driveRequest(path, options = {}) {
+    const token = await refreshGoogleDriveTokenIfNeeded();
+    if (!token) throw new Error("Google Drive가 연결되어 있지 않아요.");
+
+    let res = await fetch(`https://www.googleapis.com/drive/v3${path}`, {
+      ...options,
+      headers: { Authorization: `Bearer ${token}`, ...(options.headers || {}) },
+    });
+
+    if (res.status === 401) {
+      const refreshedToken = await refreshGoogleDriveTokenIfNeeded({ force: true });
+      if (refreshedToken) {
+        res = await fetch(`https://www.googleapis.com/drive/v3${path}`, {
+          ...options,
+          headers: { Authorization: `Bearer ${refreshedToken}`, ...(options.headers || {}) },
+        });
+      }
+    }
+
     if (!res.ok) throw new Error(await res.text());
     return res;
   }
@@ -703,7 +812,16 @@ export default function App() {
         ? `https://www.googleapis.com/upload/drive/v3/files/${file.id}?uploadType=multipart&fields=id,name,modifiedTime`
         : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,modifiedTime";
       const method = file ? "PATCH" : "POST";
-      const res = await fetch(url, { method, headers: { Authorization: `Bearer ${driveToken}` }, body: form });
+      const token = await refreshGoogleDriveTokenIfNeeded();
+      if (!token) throw new Error("Google Drive가 연결되어 있지 않아요.");
+      let res = await fetch(url, { method, headers: { Authorization: `Bearer ${token}` }, body: form });
+
+      if (res.status === 401) {
+        const refreshedToken = await refreshGoogleDriveTokenIfNeeded({ force: true });
+        if (refreshedToken) {
+          res = await fetch(url, { method, headers: { Authorization: `Bearer ${refreshedToken}` }, body: form });
+        }
+      }
       if (!res.ok) throw new Error(await res.text());
 
       let now = new Date().toISOString();
@@ -765,10 +883,49 @@ export default function App() {
 
   useEffect(() => {
     if (!state.driveAutoSync || !driveToken) return;
+    if (!driveInitialSyncReadyRef.current) return;
+
     const timer = setTimeout(() => saveToGoogleDrive(state), 2500);
     return () => clearTimeout(timer);
   }, [syncPayload, state.driveAutoSync, driveToken]);
 
+
+  async function runInitialGoogleDriveSync() {
+    if (!state.driveAutoSync || !driveToken || driveInitialSyncInProgressRef.current) return;
+
+    try {
+      driveInitialSyncInProgressRef.current = true;
+      driveInitialSyncReadyRef.current = false;
+      setDriveStatus("Google Drive 최신 데이터 확인 중...");
+
+      const file = await getDriveFileMetadata();
+
+      if (!file?.id || !file.modifiedTime) {
+        driveInitialSyncReadyRef.current = true;
+        setDriveStatus("Google Drive에 저장된 데이터 없음");
+        return;
+      }
+
+      const remoteTime = new Date(file.modifiedTime).getTime();
+      const localTime = state.driveLastSyncedAt ? new Date(state.driveLastSyncedAt).getTime() : 0;
+      const knownRemoteTime = driveLastRemoteModifiedRef.current ? new Date(driveLastRemoteModifiedRef.current).getTime() : 0;
+      const baseline = Math.max(localTime || 0, knownRemoteTime || 0);
+
+      if (!baseline || remoteTime > baseline + 1500) {
+        await loadFromGoogleDrive();
+        setDriveStatus("Google Drive 최신 데이터 불러오기 완료");
+      } else {
+        setDriveStatus("Google Drive 최신 상태 확인 완료");
+      }
+    } catch (err) {
+      const message = err?.message ? String(err.message) : "알 수 없는 오류";
+      console.error("[XL Calendar] Google Drive initial sync failed", err);
+      setDriveStatus(`Google Drive 최신 데이터 확인 실패: ${message.slice(0, 120)}`);
+    } finally {
+      driveInitialSyncReadyRef.current = true;
+      driveInitialSyncInProgressRef.current = false;
+    }
+  }
 
   async function autoPullFromGoogleDrive() {
     if (!state.driveAutoSync || !driveToken || driveAutoPullRef.current) return;
@@ -797,21 +954,28 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!state.driveAutoSync || !driveToken) return;
+    if (!state.driveAutoSync || !driveToken) {
+      driveInitialSyncReadyRef.current = false;
+      return;
+    }
+
+    driveInitialSyncReadyRef.current = false;
 
     const first = window.setTimeout(() => {
-      autoPullFromGoogleDrive();
-    }, 3500);
+      runInitialGoogleDriveSync();
+    }, 1200);
 
     const interval = window.setInterval(() => {
-      autoPullFromGoogleDrive();
+      if (driveInitialSyncReadyRef.current) {
+        autoPullFromGoogleDrive();
+      }
     }, 60000);
 
     return () => {
       window.clearTimeout(first);
       window.clearInterval(interval);
     };
-  }, [state.driveAutoSync, driveToken, state.driveLastSyncedAt]);
+  }, [state.driveAutoSync, driveToken]);
 
   async function checkForUpdate({ silent = false } = {}) {
     const url = String(state.updateInfoUrl || DEFAULT_UPDATE_INFO_URL).trim();
