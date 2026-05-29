@@ -71,7 +71,7 @@ function saveSessionTimers(state) {
 
 const DRIVE_FILE_NAME = "xl-calendar-data.json";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
-const APP_VERSION = "1.0.9";
+const APP_VERSION = "1.0.10";
 const DRIVE_TOKEN_STORAGE_KEY = "xl-google-drive-token";
 const DRIVE_TOKEN_INFO_STORAGE_KEY = "xl-google-drive-token-info";
 
@@ -407,14 +407,16 @@ function getAnniversaryInfo(item, baseKey = null) {
   const today = new Date(base.getFullYear(), base.getMonth(), base.getDate());
   const origin = new Date(sourceDate.getFullYear(), sourceDate.getMonth(), sourceDate.getDate());
   const diff = Math.round((today.getTime() - origin.getTime()) / 86400000);
-  const abs = Math.abs(diff);
+  const inclusiveDiff = diff >= 0 ? diff + 1 : diff;
+  const abs = Math.abs(inclusiveDiff);
 
   return {
     ...item,
     targetKey: makeDate(origin.getFullYear(), origin.getMonth() + 1, origin.getDate()),
     dateDisplay: `${origin.getFullYear()}/${pad(origin.getMonth() + 1)}/${pad(origin.getDate())}`,
-    diff,
-    label: diff === 0 ? "D-DAY" : diff > 0 ? `D+${abs}` : `D-${abs}`,
+    diff: inclusiveDiff,
+    elapsedDays: inclusiveDiff,
+    label: inclusiveDiff === 1 ? "D-DAY" : inclusiveDiff > 1 ? `D+${abs}` : `D-${abs}`,
   };
 }
 
