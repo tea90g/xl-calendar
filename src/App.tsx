@@ -71,7 +71,7 @@ function saveSessionTimers(state) {
 
 const DRIVE_FILE_NAME = "xl-calendar-data.json";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
-const APP_VERSION = "1.0.10";
+const APP_VERSION = "1.1.0";
 const DRIVE_TOKEN_STORAGE_KEY = "xl-google-drive-token";
 const DRIVE_TOKEN_INFO_STORAGE_KEY = "xl-google-drive-token-info";
 
@@ -2564,9 +2564,6 @@ function EventCard({ ev, cat, dragging, onEdit, onDragStart, onDragOver, onDrop,
         }}
       />
 
-      {ev.continuesFromPrev && (
-        <span className="absolute left-[6px] top-1/2 z-[4] -translate-y-1/2 text-[13px] font-black text-[#9a948d] opacity-80">→</span>
-      )}
       {ev.continuesNext && (
         <span className="absolute right-[6px] top-1/2 z-[4] -translate-y-1/2 text-[13px] font-black text-[#9a948d] opacity-80">→</span>
       )}
@@ -2579,7 +2576,7 @@ function EventCard({ ev, cat, dragging, onEdit, onDragStart, onDragOver, onDrop,
         )}
         <span
           className="block whitespace-pre-line text-[12px] font-medium leading-[1.28] tracking-[0em] text-[#2f2a26]"
-          style={{ textRendering: "geometricPrecision", WebkitFontSmoothing: "antialiased", fontWeight: 500, paddingLeft: ev.continuesFromPrev ? 18 : 0, paddingRight: ev.continuesNext ? 16 : 0 }}
+          style={{ textRendering: "geometricPrecision", WebkitFontSmoothing: "antialiased", fontWeight: 500, paddingLeft: 0, paddingRight: ev.continuesNext ? 16 : 0 }}
         >
           {displayLines.map((line, i) => <React.Fragment key={i}>{line}{i < displayLines.length - 1 && <br />}</React.Fragment>)}
         </span>
