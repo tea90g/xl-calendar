@@ -71,7 +71,7 @@ function saveSessionTimers(state) {
 
 const DRIVE_FILE_NAME = "xl-calendar-data.json";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.1.1";
 const DRIVE_TOKEN_STORAGE_KEY = "xl-google-drive-token";
 const DRIVE_TOKEN_INFO_STORAGE_KEY = "xl-google-drive-token-info";
 
@@ -247,6 +247,11 @@ function starterState() {
     autoLaunchOnStartup: false,
     displayOrderOverrides: {},
   };
+}
+
+
+function cleanupDoneTemporaryTodos(todos = []) {
+  return (Array.isArray(todos) ? todos : []).filter((todo) => Boolean(todo.fixed) || !todo.done);
 }
 
 function getElectronStateApi() {
@@ -593,7 +598,7 @@ export default function App() {
 
     setState((s) => {
       const todos = Array.isArray(s.todos) ? s.todos : [];
-      const cleanedTodos = todos.filter((todo) => Boolean(todo.fixed) || !todo.done);
+      const cleanedTodos = cleanupDoneTemporaryTodos(todos);
       if (cleanedTodos.length === todos.length) return s;
       return { ...s, todos: cleanedTodos };
     });
@@ -853,9 +858,13 @@ export default function App() {
       const res = await driveRequest(`/files/${file.id}?alt=media`);
       const data = await res.json();
       const loaded = data.state || data;
+      const cleanedLoaded = {
+        ...loaded,
+        todos: cleanupDoneTemporaryTodos(loaded?.todos),
+      };
       const syncedAt = file.modifiedTime || new Date().toISOString();
       driveLastRemoteModifiedRef.current = syncedAt;
-      setState((s) => ({ ...starterState(), ...s, ...loaded, driveClientId: s.driveClientId, driveClientSecret: s.driveClientSecret, driveLastSyncedAt: syncedAt }));
+      setState((s) => ({ ...starterState(), ...s, ...cleanedLoaded, driveClientId: s.driveClientId, driveClientSecret: s.driveClientSecret, driveLastSyncedAt: syncedAt }));
       setDriveStatus("Google Drive 불러오기 완료");
     } catch {
       setDriveStatus("Google Drive 불러오기 실패");
