@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, shell, powerMonitor, screen } = require("electron");
+const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, shell, powerMonitor, screen } = require("electron");
 const path = require("path");
 const http = require("http");
 const https = require("https");
@@ -66,6 +66,84 @@ const fsp = require("fs/promises");
 const { execFile } = require("child_process");
 
 const isDev = !app.isPackaged;
+
+
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+}
+
+let mainWindow = null;
+let tray = null;
+let isQuitting = false;
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    mainWindow = createWindow();
+    return;
+  }
+
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function getTrayIconImage() {
+  const candidates = [
+    path.join(app.getAppPath(), "build", "icon.ico"),
+    path.join(__dirname, "../build/icon.ico"),
+    path.join(process.resourcesPath, "app.asar", "build", "icon.ico"),
+    process.execPath,
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const image = nativeImage.createFromPath(candidate);
+      if (image && !image.isEmpty()) return image;
+    } catch {}
+  }
+
+  return null;
+}
+
+function createTray() {
+  if (tray) return tray;
+
+  try {
+    const iconImage = getTrayIconImage();
+    if (!iconImage) {
+      console.error("[XL Calendar] tray icon load failed");
+      return null;
+    }
+
+    tray = new Tray(iconImage);
+    tray.setToolTip("XL Calendar");
+    tray.setContextMenu(Menu.buildFromTemplate([
+      {
+        label: "XL Calendar 열기",
+        click: () => showMainWindow(),
+      },
+      { type: "separator" },
+      {
+        label: "종료",
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        },
+      },
+    ]));
+
+    tray.on("click", () => showMainWindow());
+    tray.on("double-click", () => showMainWindow());
+
+    return tray;
+  } catch (err) {
+    console.error("[XL Calendar] create tray failed:", err);
+    tray = null;
+    return null;
+  }
+}
 
 function getAutoLaunchEnabled() {
   try {
@@ -801,7 +879,7 @@ function setupAutoUpdater(win) {
       markPreserveSessionTimers();
 
       try {
-        win.webContents.executeJavaScript(`
+win.webContents.executeJavaScript(`
           try {
             localStorage.setItem("xl-calendar-preserve-timers-on-next-launch", "1");
           } catch {}
@@ -855,6 +933,8 @@ function createWindow() {
     },
   });
 
+  mainWindow = win;
+
   if (savedWindowState?.isMaximized) {
     win.maximize();
   }
@@ -869,7 +949,18 @@ function createWindow() {
   win.on("move", queueSaveWindowState);
   win.on("maximize", queueSaveWindowState);
   win.on("unmaximize", queueSaveWindowState);
-  win.on("close", () => saveWindowState(win));
+  win.on("close", (event) => {
+    saveWindowState(win);
+
+    if (!isQuitting && tray) {
+      event.preventDefault();
+      win.hide();
+    }
+  });
+
+  win.on("closed", () => {
+    if (mainWindow === win) mainWindow = null;
+  });
 
   if (isDev) {
     win.loadURL("http://localhost:5173");
@@ -913,6 +1004,7 @@ function createWindow() {
   });
 
   setupAutoUpdater(win);
+  return win;
 }
 
 ipcMain.handle("xl:check-for-updates", async () => {
@@ -959,16 +1051,32 @@ ipcMain.handle("xl:set-auto-launch", async (_event, enabled) => {
 
 
 
+if (gotTheLock) {
+  app.on("second-instance", () => {
+    showMainWindow();
+  });
+
 app.whenReady().then(async () => {
   await ensureCalendarDataDir().catch(() => {});
 
-  createWindow();
+  try {
+    createTray();
+  } catch (err) {
+    console.error("[XL Calendar] tray startup failed:", err);
+  }
+
+  mainWindow = createWindow();
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    showMainWindow();
   });
+});
+}
+
+app.on("before-quit", () => {
+  isQuitting = true;
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  // X 버튼은 창을 숨기고 시스템 트레이에서 계속 실행합니다.
 });

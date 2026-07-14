@@ -71,9 +71,22 @@ function saveSessionTimers(state) {
 
 const DRIVE_FILE_NAME = "xl-calendar-data.json";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
-const APP_VERSION = "1.1.1";
+const APP_VERSION = "1.2.2";
 const DRIVE_TOKEN_STORAGE_KEY = "xl-google-drive-token";
 const DRIVE_TOKEN_INFO_STORAGE_KEY = "xl-google-drive-token-info";
+const STICKER_MAX_COUNT = 3;
+const STICKER_MAX_FILE_BYTES = 3 * 1024 * 1024;
+const UPDATE_NOTICE_STORAGE_KEY = "xl-calendar-last-seen-update-version";
+const UPDATE_NOTES_BY_VERSION = {
+  "1.2.1": [
+    "스티커 기능 추가",
+    "창 닫기(X) 시 앱을 종료하지 않고 시스템 트레이로 이동",
+  ].map((item) => `• ${item}`).join("\n"),
+  "1.2.2": [
+    "스티커 기능 추가",
+    "창 닫기(X) 시 앱을 종료하지 않고 시스템 트레이로 이동",
+  ].map((item) => `• ${item}`).join("\n"),
+};
 
 function readDriveTokenInfo() {
   try {
@@ -220,6 +233,7 @@ function starterState() {
     month: now.getMonth() + 1,
     events: STARTER_EVENTS,
     todos: STARTER_TODOS,
+    deletedTodoIds: {},
     routineDoneByMonth: {},
     categories: DEFAULT_CATEGORIES,
     image: null,
@@ -246,12 +260,33 @@ function starterState() {
     updateDismissedVersion: "",
     autoLaunchOnStartup: false,
     displayOrderOverrides: {},
+    stickers: [],
   };
 }
 
 
 function cleanupDoneTemporaryTodos(todos = []) {
   return (Array.isArray(todos) ? todos : []).filter((todo) => Boolean(todo.fixed) || !todo.done);
+}
+
+function mergeDeletedTodoIds(...sources) {
+  const merged = {};
+  sources.forEach((source) => {
+    if (!source || typeof source !== "object") return;
+    Object.entries(source).forEach(([id, deletedAt]) => {
+      if (!id) return;
+      const nextTime = new Date(String(deletedAt || 0)).getTime();
+      const currentTime = new Date(String(merged[id] || 0)).getTime();
+      if (!merged[id] || nextTime >= currentTime) {
+        merged[id] = String(deletedAt || new Date().toISOString());
+      }
+    });
+  });
+  return merged;
+}
+
+function filterDeletedTodos(todos = [], deletedTodoIds = {}) {
+  return (Array.isArray(todos) ? todos : []).filter((todo) => !deletedTodoIds?.[todo?.id]);
 }
 
 function getElectronStateApi() {
@@ -545,6 +580,11 @@ export default function App() {
   const [dragging, setDragging] = useState(null);
   const [hoverDate, setHoverDate] = useState(null);
   const [copyMode, setCopyMode] = useState(false);
+  const [stickerEditMode, setStickerEditMode] = useState(false);
+  const [updateNotice, setUpdateNotice] = useState(null);
+  const stickerInputRef = useRef(null);
+  const stickerDragRef = useRef(null);
+  const stickerTransformRef = useRef(null);
   const [driveToken, setDriveToken] = useState(() => {
     try {
       const info = readDriveTokenInfo();
@@ -586,11 +626,29 @@ export default function App() {
     }, 250);
 
     return () => window.clearTimeout(timer);
-  }, [state.events, state.displayOrderOverrides, state.todos, state.routineDoneByMonth, state.categories, state.image, state.anniversaries, state.showAnniversaryPanel, state.timerImages, state.selectedImageSlot, state.fixedImageMode, state.showJapanHolidays, state.showFixedList, state.showTodayList, state.showTimerBar, state.searchText, state.filterCategoryId, state.year, state.month]);
+  }, [state.events, state.displayOrderOverrides, state.todos, state.deletedTodoIds, state.routineDoneByMonth, state.categories, state.image, state.anniversaries, state.showAnniversaryPanel, state.timerImages, state.selectedImageSlot, state.fixedImageMode, state.showJapanHolidays, state.showFixedList, state.showTodayList, state.showTimerBar, state.searchText, state.filterCategoryId, state.year, state.month, state.stickers]);
 
   useEffect(() => {
     saveSessionTimers(state);
   }, [state.workSeconds, state.otherSeconds, state.awaySeconds]);
+
+  useEffect(() => {
+    try {
+      const lastSeenVersion = localStorage.getItem(UPDATE_NOTICE_STORAGE_KEY) || "";
+      if (lastSeenVersion === APP_VERSION) return;
+
+      setUpdateNotice({
+        version: APP_VERSION,
+        notes: UPDATE_NOTES_BY_VERSION[APP_VERSION] || "업데이트 내역을 확인할 수 없습니다.",
+      });
+      localStorage.setItem(UPDATE_NOTICE_STORAGE_KEY, APP_VERSION);
+    } catch {
+      setUpdateNotice({
+        version: APP_VERSION,
+        notes: UPDATE_NOTES_BY_VERSION[APP_VERSION] || "업데이트 내역을 확인할 수 없습니다.",
+      });
+    }
+  }, []);
 
   useEffect(() => {
     if (todayTodoCleanupRef.current) return;
@@ -647,6 +705,254 @@ export default function App() {
     };
   }, []);
 
+
+
+  function addStickerFromFile(file) {
+    if (!file) return;
+
+    const allowedTypes = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+    if (!allowedTypes.includes(file.type)) {
+      alert("스티커는 PNG, JPG, WEBP, GIF 파일만 사용할 수 있어요.");
+      return;
+    }
+
+    if (file.size > STICKER_MAX_FILE_BYTES) {
+      alert("스티커 이미지는 파일당 최대 3MB까지 사용할 수 있어요.");
+      return;
+    }
+
+    if ((state.stickers || []).length >= STICKER_MAX_COUNT) {
+      alert("스티커는 PNG, JPG, WEBP, GIF 형식으로 최대 3개까지 사용할 수 있어요.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const src = String(reader.result || "");
+      const image = new Image();
+
+      image.onload = () => {
+        const naturalWidth = Math.max(1, image.naturalWidth || 1);
+        const naturalHeight = Math.max(1, image.naturalHeight || 1);
+        const displayScale = Math.min(1, 300 / naturalWidth, 300 / naturalHeight);
+
+        setState((s) => ({
+          ...s,
+          stickers: [
+            ...(s.stickers || []),
+            {
+              id: `sticker-${uid()}`,
+              src,
+              name: file.name || "sticker",
+              xRatio: 0.5,
+              yRatio: 0.5,
+              width: Math.max(24, Math.round(naturalWidth * displayScale)),
+              height: Math.max(24, Math.round(naturalHeight * displayScale)),
+              naturalWidth,
+              naturalHeight,
+              rotation: 0,
+              zIndex: Math.max(0, ...(s.stickers || []).map((item) => Number(item.zIndex) || 0)) + 1,
+            },
+          ].slice(0, STICKER_MAX_COUNT),
+        }));
+      };
+
+      image.onerror = () => alert("스티커 이미지를 읽지 못했어요.");
+      image.src = src;
+    };
+
+    reader.onerror = () => alert("스티커 파일을 읽지 못했어요.");
+    reader.readAsDataURL(file);
+  }
+
+  function deleteSticker(id) {
+    setState((s) => ({
+      ...s,
+      stickers: (s.stickers || []).filter((sticker) => sticker.id !== id),
+    }));
+  }
+
+  function bringStickerToFront(id) {
+    setState((s) => {
+      const stickers = s.stickers || [];
+      const maxZ = Math.max(0, ...stickers.map((item, index) => Number(item.zIndex) || index + 1));
+      return {
+        ...s,
+        stickers: stickers.map((item) =>
+          item.id === id ? { ...item, zIndex: maxZ + 1 } : item
+        ),
+      };
+    });
+  }
+
+  function getStickerCenter(sticker) {
+    const viewportWidth = Math.max(1, window.innerWidth);
+    const viewportHeight = Math.max(1, window.innerHeight);
+    return {
+      x: (Number(sticker.xRatio) || 0.5) * viewportWidth,
+      y: (Number(sticker.yRatio) || 0.5) * viewportHeight,
+    };
+  }
+
+  function startStickerResize(event, sticker) {
+    if (!stickerEditMode) return;
+    event.preventDefault();
+    event.stopPropagation();
+    bringStickerToFront(sticker.id);
+
+    const width = Math.max(24, Number(sticker.width) || 120);
+    const height = Math.max(24, Number(sticker.height) || 120);
+
+    stickerTransformRef.current = {
+      type: "resize",
+      id: sticker.id,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startWidth: width,
+      startHeight: height,
+      aspectRatio: width / height,
+    };
+
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function startStickerRotate(event, sticker) {
+    if (!stickerEditMode) return;
+    event.preventDefault();
+    event.stopPropagation();
+    bringStickerToFront(sticker.id);
+
+    const center = getStickerCenter(sticker);
+    const startPointerAngle = Math.atan2(event.clientY - center.y, event.clientX - center.x);
+
+    stickerTransformRef.current = {
+      type: "rotate",
+      id: sticker.id,
+      pointerId: event.pointerId,
+      centerX: center.x,
+      centerY: center.y,
+      startPointerAngle,
+      startRotation: Number(sticker.rotation) || 0,
+    };
+
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function moveStickerTransform(event) {
+    const transform = stickerTransformRef.current;
+    if (!transform || transform.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (transform.type === "resize") {
+      const deltaX = event.clientX - transform.startX;
+      const deltaY = event.clientY - transform.startY;
+      const widthFromX = transform.startWidth + deltaX;
+      const widthFromY = transform.startWidth + deltaY * transform.aspectRatio;
+      const candidateWidth = Math.abs(deltaX) >= Math.abs(deltaY)
+        ? widthFromX
+        : widthFromY;
+      const maxWidth = Math.max(120, Math.min(1200, window.innerWidth * 0.95));
+      const nextWidth = Math.max(24, Math.min(maxWidth, candidateWidth));
+      const nextHeight = Math.max(24, nextWidth / transform.aspectRatio);
+
+      setState((s) => ({
+        ...s,
+        stickers: (s.stickers || []).map((item) =>
+          item.id === transform.id
+            ? { ...item, width: Math.round(nextWidth), height: Math.round(nextHeight) }
+            : item
+        ),
+      }));
+      return;
+    }
+
+    if (transform.type === "rotate") {
+      const currentAngle = Math.atan2(
+        event.clientY - transform.centerY,
+        event.clientX - transform.centerX
+      );
+      const deltaDegrees = (currentAngle - transform.startPointerAngle) * 180 / Math.PI;
+      const nextRotation = transform.startRotation + deltaDegrees;
+
+      setState((s) => ({
+        ...s,
+        stickers: (s.stickers || []).map((item) =>
+          item.id === transform.id
+            ? { ...item, rotation: Math.round(nextRotation * 10) / 10 }
+            : item
+        ),
+      }));
+    }
+  }
+
+  function endStickerTransform(event) {
+    const transform = stickerTransformRef.current;
+    if (!transform || transform.pointerId !== event.pointerId) return;
+    stickerTransformRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  }
+
+  function startStickerDrag(event, sticker) {
+    if (!stickerEditMode) return;
+    event.preventDefault();
+    event.stopPropagation();
+    bringStickerToFront(sticker.id);
+
+    const viewportWidth = Math.max(1, window.innerWidth);
+    const viewportHeight = Math.max(1, window.innerHeight);
+    const stickerWidth = Number(sticker.width) || 120;
+    const stickerHeight = Number(sticker.height) || 120;
+    const startLeft = (Number(sticker.xRatio) || 0.5) * viewportWidth - stickerWidth / 2;
+    const startTop = (Number(sticker.yRatio) || 0.5) * viewportHeight - stickerHeight / 2;
+
+    stickerDragRef.current = {
+      id: sticker.id,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startLeft,
+      startTop,
+      width: stickerWidth,
+      height: stickerHeight,
+    };
+
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function moveStickerDrag(event) {
+    const drag = stickerDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const viewportWidth = Math.max(1, window.innerWidth);
+    const viewportHeight = Math.max(1, window.innerHeight);
+    const nextLeft = Math.min(
+      viewportWidth - Math.min(24, drag.width),
+      Math.max(-drag.width + 24, drag.startLeft + event.clientX - drag.startX)
+    );
+    const nextTop = Math.min(
+      viewportHeight - Math.min(24, drag.height),
+      Math.max(-drag.height + 24, drag.startTop + event.clientY - drag.startY)
+    );
+
+    const xRatio = (nextLeft + drag.width / 2) / viewportWidth;
+    const yRatio = (nextTop + drag.height / 2) / viewportHeight;
+
+    setState((s) => ({
+      ...s,
+      stickers: (s.stickers || []).map((sticker) =>
+        sticker.id === drag.id ? { ...sticker, xRatio, yRatio } : sticker
+      ),
+    }));
+  }
+
+  function endStickerDrag(event) {
+    const drag = stickerDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    stickerDragRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  }
 
   const makeSyncSnapshot = (source = state) => ({
     version: 1,
@@ -858,13 +1164,25 @@ export default function App() {
       const res = await driveRequest(`/files/${file.id}?alt=media`);
       const data = await res.json();
       const loaded = data.state || data;
-      const cleanedLoaded = {
-        ...loaded,
-        todos: cleanupDoneTemporaryTodos(loaded?.todos),
-      };
       const syncedAt = file.modifiedTime || new Date().toISOString();
       driveLastRemoteModifiedRef.current = syncedAt;
-      setState((s) => ({ ...starterState(), ...s, ...cleanedLoaded, driveClientId: s.driveClientId, driveClientSecret: s.driveClientSecret, driveLastSyncedAt: syncedAt }));
+      setState((s) => {
+        const mergedDeletedTodoIds = mergeDeletedTodoIds(s.deletedTodoIds, loaded?.deletedTodoIds);
+        const cleanedTodos = filterDeletedTodos(
+          cleanupDoneTemporaryTodos(loaded?.todos),
+          mergedDeletedTodoIds
+        );
+        return {
+          ...starterState(),
+          ...s,
+          ...loaded,
+          todos: cleanedTodos,
+          deletedTodoIds: mergedDeletedTodoIds,
+          driveClientId: s.driveClientId,
+          driveClientSecret: s.driveClientSecret,
+          driveLastSyncedAt: syncedAt,
+        };
+      });
       setDriveStatus("Google Drive 불러오기 완료");
     } catch {
       setDriveStatus("Google Drive 불러오기 실패");
@@ -875,6 +1193,7 @@ export default function App() {
     events: state.events,
     displayOrderOverrides: state.displayOrderOverrides,
     todos: state.todos,
+    deletedTodoIds: state.deletedTodoIds,
     routineDoneByMonth: state.routineDoneByMonth,
     categories: state.categories,
     image: state.image,
@@ -890,7 +1209,8 @@ export default function App() {
     filterCategoryId: state.filterCategoryId,
     year: state.year,
     month: state.month,
-  }), [state.events, state.todos, state.routineDoneByMonth, state.categories, state.image, state.anniversaries, state.showAnniversaryPanel, state.timerImages, state.selectedImageSlot, state.fixedImageMode, state.showJapanHolidays, state.showFixedList, state.showTodayList, state.showTimerBar, state.filterCategoryId, state.year, state.month, state.displayOrderOverrides]);
+    stickers: state.stickers,
+  }), [state.events, state.todos, state.deletedTodoIds, state.routineDoneByMonth, state.categories, state.image, state.anniversaries, state.showAnniversaryPanel, state.timerImages, state.selectedImageSlot, state.fixedImageMode, state.showJapanHolidays, state.showFixedList, state.showTodayList, state.showTimerBar, state.filterCategoryId, state.year, state.month, state.displayOrderOverrides, state.stickers]);
 
   useEffect(() => {
     if (!state.driveAutoSync || !driveToken) return;
@@ -1735,20 +2055,40 @@ ${info.message}` : "";
       }))
       .filter((todo) => todo.text);
 
-    setState((s) => ({
-      ...s,
-      todos: [
-        ...s.todos.filter((todo) => Boolean(todo.fixed) !== fixed),
-        ...cleaned,
-      ],
-      routineDoneByMonth: fixed
-        ? Object.fromEntries(Object.entries(s.routineDoneByMonth || {}).map(([monthKey, doneMap]) => {
-            const validIds = new Set(cleaned.map((todo) => todo.id));
-            const next = Object.fromEntries(Object.entries(doneMap || {}).filter(([todoId]) => validIds.has(todoId)));
-            return [monthKey, next];
-          }))
-        : s.routineDoneByMonth,
-    }));
+    setState((s) => {
+      const previousTargetTodos = (s.todos || []).filter((todo) => Boolean(todo.fixed) === fixed);
+      const keptIds = new Set(cleaned.map((todo) => todo.id));
+      const deletedAt = new Date().toISOString();
+      const nextDeletedTodoIds = { ...(s.deletedTodoIds || {}) };
+
+      previousTargetTodos.forEach((todo) => {
+        if (todo?.id && !keptIds.has(todo.id)) {
+          nextDeletedTodoIds[todo.id] = deletedAt;
+        }
+      });
+
+      cleaned.forEach((todo) => {
+        if (todo?.id && nextDeletedTodoIds[todo.id]) {
+          delete nextDeletedTodoIds[todo.id];
+        }
+      });
+
+      return {
+        ...s,
+        todos: [
+          ...(s.todos || []).filter((todo) => Boolean(todo.fixed) !== fixed),
+          ...cleaned,
+        ],
+        deletedTodoIds: nextDeletedTodoIds,
+        routineDoneByMonth: fixed
+          ? Object.fromEntries(Object.entries(s.routineDoneByMonth || {}).map(([monthKey, doneMap]) => {
+              const validIds = new Set(cleaned.map((todo) => todo.id));
+              const next = Object.fromEntries(Object.entries(doneMap || {}).filter(([todoId]) => validIds.has(todoId)));
+              return [monthKey, next];
+            }))
+          : s.routineDoneByMonth,
+      };
+    });
     closeTodoModal();
   }
   function toggleTodo(todo) {
@@ -1977,7 +2317,41 @@ ${info.message}` : "";
         <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-r-[12px] bg-white pl-[clamp(2px,0.8vw,14px)] pr-[52px] pt-0">
           <div className="mx-auto flex h-[52px] w-[calc(100%+52px)] max-w-none items-center justify-between rounded-none border-b border-[#e5e5e5] bg-[#fcfcfc] pl-[13px] pr-[8px] text-[12px] text-[#aaa] shadow-[0_3px_8px_rgba(0,0,0,0.025)]" style={{ WebkitAppRegion: "drag" }}>
             <div className="flex items-center gap-[10px] font-bold text-[#8f8f8f]" style={{ WebkitAppRegion: "no-drag" }}><button onClick={() => { const now = new Date(); const key = makeDate(now.getFullYear(), now.getMonth() + 1, now.getDate()); setState((s) => ({ ...s, year: now.getFullYear(), month: now.getMonth() + 1 }));  }} className="rounded-full border border-[#e6e6e6] bg-white px-[12px] py-[5px] text-[11px] font-[600] tracking-[-0.01em] text-[#777] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition hover:bg-[#f7f7f7]">오늘</button><div className="flex items-center gap-2"><Search size={13} /><input value={state.searchText} onChange={(e) => setState((s) => ({ ...s, searchText: e.target.value }))} placeholder="검색" className="h-[27px] w-[180px] rounded-full border border-[#e8e8e8] bg-white px-3 text-[12px] outline-none" /></div><select value={state.filterCategoryId} onChange={(e) => setState((s) => ({ ...s, filterCategoryId: e.target.value }))} className="h-[27px] rounded-full border border-[#e8e8e8] bg-white px-2 outline-none"><option value="all">전체</option>{state.categories.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}<option value="routine">루틴</option></select><button onClick={undo} className="rounded-full border border-[#e6e6e6] bg-white px-[12px] py-[5px] text-[11px] font-[600] tracking-[-0.01em] text-[#777] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition hover:bg-[#f7f7f7]">UNDO</button></div>
-            <div className="flex items-center gap-2 pr-[10px]" style={{ WebkitAppRegion: "no-drag" }}><button onClick={() => setGuideOpen(true)} className="rounded-full border border-[#e6e6e6] bg-white px-[12px] py-[5px] text-[11px] font-[600] tracking-[0.02em] text-[#777] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition hover:bg-[#f7f7f7]">GUIDE</button><button onClick={() => setSettingsOpen(true)} className="flex items-center gap-[5px] rounded-full border border-[#e6e6e6] bg-white px-[12px] py-[5px] text-[11px] font-[600] tracking-[-0.01em] text-[#777] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition hover:bg-[#f7f7f7]"><Settings size={13} />설정</button><WindowControls /></div>
+            <div className="flex items-center gap-2 pr-[10px]" style={{ WebkitAppRegion: "no-drag" }}>
+              <input
+                ref={stickerInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                className="hidden"
+                onChange={(e) => {
+                  addStickerFromFile(e.target.files?.[0]);
+                  e.currentTarget.value = "";
+                }}
+              />
+              {stickerEditMode && (
+                <button
+                  type="button"
+                  onClick={() => stickerInputRef.current?.click()}
+                  disabled={(state.stickers || []).length >= STICKER_MAX_COUNT}
+                  className="rounded-full border border-[#e6e6e6] bg-white px-[10px] py-[5px] text-[11px] font-[700] text-[#777] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition hover:bg-[#f7f7f7] disabled:cursor-not-allowed disabled:opacity-35"
+                  title="스티커 추가"
+                >
+                  ＋
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setStickerEditMode((value) => !value)}
+                className={cx(
+                  "rounded-full border px-[12px] py-[5px] text-[11px] font-[700] tracking-[0.01em] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition",
+                  stickerEditMode
+                    ? "border-[#d7c8ed] bg-[#f5f0fb] text-[#80699c]"
+                    : "border-[#e6e6e6] bg-white text-[#777] hover:bg-[#f7f7f7]"
+                )}
+              >
+                STICKER {stickerEditMode ? "ON" : "OFF"}
+              </button>
+              <button onClick={() => setGuideOpen(true)} className="rounded-full border border-[#e6e6e6] bg-white px-[12px] py-[5px] text-[11px] font-[600] tracking-[0.02em] text-[#777] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition hover:bg-[#f7f7f7]">GUIDE</button><button onClick={() => setSettingsOpen(true)} className="flex items-center gap-[5px] rounded-full border border-[#e6e6e6] bg-white px-[12px] py-[5px] text-[11px] font-[600] tracking-[-0.01em] text-[#777] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition hover:bg-[#f7f7f7]"><Settings size={13} />설정</button><WindowControls /></div>
           </div>
           <div className="mx-auto flex min-h-0 flex-1 flex-col w-full max-w-none"><div className="grid h-[28px] grid-cols-7 items-center text-center text-[14px] font-[600] tracking-[0em] text-[#555555]"><span className="text-[#FF8DA1]">일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span className="text-[#7EA6FF]">토</span></div>
             <div className="grid flex-1 auto-rows-fr grid-cols-7 overflow-hidden rounded-[8px] border border-[#ececec] bg-[#fcfcfc] min-h-0">{days.map((d) => <DayCell key={d.key} d={d} events={byDate.get(d.key) || []} holidayMeta={holidayMeta.get(d.key)} anniversaryMarks={anniversaryMarksByDate.get(d.key) || []} cat={cat} hoverDate={hoverDate} todayKey={todayKey} dragging={dragging} setDragging={setDragging} setHoverDate={setHoverDate} setCopyMode={setCopyMode} copyMode={copyMode} openNew={openNew} openEdit={openEdit} moveEvent={moveEvent} setState={setState} routineMonthKey={routineMonthKey} />)}</div>
@@ -2012,7 +2386,118 @@ ${info.message}` : "";
         </main>
       </div>
 
+      <div
+        className="pointer-events-none fixed inset-0 z-[90000] hidden md:block"
+        aria-hidden={!stickerEditMode}
+      >
+        {(state.stickers || []).map((sticker) => {
+          const width = Math.max(24, Number(sticker.width) || 120);
+          const height = Math.max(24, Number(sticker.height) || 120);
+          const left = `calc(${Math.max(-0.5, Math.min(1.5, Number(sticker.xRatio) || 0.5)) * 100}vw - ${width / 2}px)`;
+          const top = `calc(${Math.max(-0.5, Math.min(1.5, Number(sticker.yRatio) || 0.5)) * 100}vh - ${height / 2}px)`;
+
+          return (
+            <div
+              key={sticker.id}
+              className={cx(
+                "absolute select-none",
+                stickerEditMode ? "pointer-events-auto cursor-grab active:cursor-grabbing" : "pointer-events-none"
+              )}
+              style={{
+                left,
+                top,
+                width,
+                height,
+                touchAction: "none",
+                zIndex: Number(sticker.zIndex) || 1,
+                transform: `rotate(${Number(sticker.rotation) || 0}deg)`,
+                transformOrigin: "center center",
+              }}
+              onPointerDown={(event) => startStickerDrag(event, sticker)}
+              onPointerMove={moveStickerDrag}
+              onPointerUp={endStickerDrag}
+              onPointerCancel={endStickerDrag}
+            >
+              <img
+                src={sticker.src}
+                alt={sticker.name || "sticker"}
+                draggable={false}
+                className={cx(
+                  "block h-full w-full object-contain",
+                  stickerEditMode && "drop-shadow-[0_5px_8px_rgba(0,0,0,0.16)]"
+                )}
+              />
+              {stickerEditMode && (
+                <>
+                  <div
+                    className="pointer-events-none absolute left-1/2 top-[-28px] h-[22px] w-px -translate-x-1/2 bg-[#c9bdcf]"
+                  />
+                  <button
+                    type="button"
+                    onPointerDown={(event) => startStickerRotate(event, sticker)}
+                    onPointerMove={moveStickerTransform}
+                    onPointerUp={endStickerTransform}
+                    onPointerCancel={endStickerTransform}
+                    className="absolute left-1/2 top-[-42px] flex h-[25px] w-[25px] -translate-x-1/2 items-center justify-center rounded-full border border-[#ded4e5] bg-white/95 text-[15px] font-black leading-none text-[#80699c] shadow-[0_4px_10px_rgba(0,0,0,0.14)]"
+                    title="회전"
+                    aria-label="스티커 회전"
+                  >
+                    ↻
+                  </button>
+                  <button
+                    type="button"
+                    onPointerDown={(event) => startStickerResize(event, sticker)}
+                    onPointerMove={moveStickerTransform}
+                    onPointerUp={endStickerTransform}
+                    onPointerCancel={endStickerTransform}
+                    className="absolute bottom-[-9px] right-[-9px] flex h-[24px] w-[24px] cursor-nwse-resize items-center justify-center rounded-full border border-[#ded4e5] bg-white/95 text-[14px] font-black leading-none text-[#80699c] shadow-[0_4px_10px_rgba(0,0,0,0.14)]"
+                    title="크기 조절"
+                    aria-label="스티커 크기 조절"
+                  >
+                    ↘
+                  </button>
+                  <button
+                    type="button"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                    event.stopPropagation();
+                    deleteSticker(sticker.id);
+                  }}
+                  className="absolute right-[-8px] top-[-8px] flex h-[24px] w-[24px] items-center justify-center rounded-full border border-[#eadde0] bg-white/95 text-[15px] font-black leading-none text-[#bd7784] shadow-[0_4px_10px_rgba(0,0,0,0.14)]"
+                  aria-label="스티커 삭제"
+                >
+                  ×
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
       {selectedDate && <EventModal selectedDate={selectedDate} editingEvent={editingEvent} draft={draft} setDraft={setDraft} state={state} target={allEvents.find((e) => e.id === editingEvent)} onClose={() => { setSelectedDate(null); setEditingEvent(null); }} onSave={saveEvent} onDelete={deleteEvent} onSaveGroup={saveGroup} onDeleteGroup={deleteGroup} />}
+      {updateNotice && (
+        <Modal size="w-[460px]">
+          <div className="border-b border-dashed border-[#e8e8e8] px-5 py-4">
+            <div className="text-[8px] font-[800] uppercase tracking-[0.22em] text-neutral-300">
+              {`updated to ${updateNotice.version || APP_VERSION}`}
+            </div>
+          </div>
+          <div className="p-5">
+            <div className="mb-3 text-[18px] font-[900] tracking-[-0.04em] text-[#333]">XL Calendar가 업데이트되었어요.</div>
+            <div className="whitespace-pre-line rounded-[14px] border border-[#ececec] bg-[#fafafa] px-4 py-4 text-[12px] font-[650] leading-[1.75] text-[#666]">
+              {updateNotice.notes || "업데이트 내역을 확인할 수 없습니다."}
+            </div>
+            <button
+              type="button"
+              onClick={() => setUpdateNotice(null)}
+              className="mt-4 w-full rounded-[12px] bg-[#111] py-3 text-[13px] font-black text-white"
+            >
+              확인
+            </button>
+          </div>
+        </Modal>
+      )}
       {guideOpen && <GuideModal onClose={() => setGuideOpen(false)} />}
       {settingsOpen && <SettingsModal state={state} setState={setState} driveStatus={driveStatus} driveConnected={Boolean(driveToken)} updateStatus={updateStatus} onDriveConnect={connectGoogleDrive} onDriveSave={() => saveToGoogleDrive(state)} onDriveLoad={loadFromGoogleDrive} onCheckUpdate={() => checkForUpdate()} onBackup={openBackupManager} activeProgramDebug={activeProgramDebug} onClose={() => setSettingsOpen(false)} />}
       {categoryOpen && <CategoryModal drafts={categoryDrafts} setDrafts={setCategoryDrafts} onClose={() => setCategoryOpen(false)} onSave={saveCategories} />}
@@ -2677,7 +3162,7 @@ function AnniversaryPanel({ items = [], onEdit }) {
                   className="pointer-events-none absolute bottom-[7px] right-[16px] z-[1] h-[63px] max-w-[96px] object-contain"
                 />
               )}
-              <span className="absolute right-[-5px] top-[-7px] z-[5] grid h-[27px] w-[27px] place-items-start rounded-full border border-[#ece9e5] bg-white/95 text-[12px] font-black text-[#111] opacity-0 shadow-[0_3px_7px_rgba(0,0,0,0.075)] transition-opacity group-hover/anniv:opacity-100">✎</span>
+              <span className="absolute right-[-5px] top-[-7px] z-[5] flex h-[27px] w-[27px] items-center justify-center rounded-full border border-[#ece9e5] bg-white/95 text-[12px] font-black text-[#111] opacity-0 shadow-[0_3px_7px_rgba(0,0,0,0.075)] transition-opacity group-hover/anniv:opacity-100">✎</span>
             </button>
           );
         }) : (
@@ -2688,7 +3173,7 @@ function AnniversaryPanel({ items = [], onEdit }) {
             style={{ ...paperTexture, boxShadow: "0 2px 4px rgba(64,52,42,0.035)" }}
           >
             <span className="text-[11px] font-[800] leading-[1.1] text-[#aaa19a]">기념일 스티커를 추가해 보세요.</span>
-            <span className="absolute right-[-5px] top-[-7px] grid h-[27px] w-[27px] place-items-start rounded-full border border-[#ece9e5] bg-white/95 text-[12px] font-black text-[#111] opacity-0 shadow-[0_3px_7px_rgba(0,0,0,0.075)] transition-opacity group-hover/anniv:opacity-100">✎</span>
+            <span className="absolute right-[-5px] top-[-7px] flex h-[27px] w-[27px] items-center justify-center rounded-full border border-[#ece9e5] bg-white/95 text-[12px] font-black text-[#111] opacity-0 shadow-[0_3px_7px_rgba(0,0,0,0.075)] transition-opacity group-hover/anniv:opacity-100">✎</span>
           </button>
         )}
       </div>
@@ -2863,6 +3348,10 @@ function GuideModal({ onClose }) {
     {
       title: "상태 이미지",
       body: "작업 / 그 외 / 자리비움 이미지를 각각 등록 가능. 고정 OFF 시 자동 전환돼요.",
+    },
+    {
+      title: "스티커",
+      body: "스티커 기능은 STICKER ON 상태에서만 이동하거나 삭제할 수 있어요.\n스티커는 최대 3개까지 사용할 수 있어요.",
     },
     {
       title: "Google Drive 연동",
