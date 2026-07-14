@@ -71,7 +71,7 @@ function saveSessionTimers(state) {
 
 const DRIVE_FILE_NAME = "xl-calendar-data.json";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
-const APP_VERSION = "1.2.2";
+const APP_VERSION = "1.2.3";
 const DRIVE_TOKEN_STORAGE_KEY = "xl-google-drive-token";
 const DRIVE_TOKEN_INFO_STORAGE_KEY = "xl-google-drive-token-info";
 const STICKER_MAX_COUNT = 3;
@@ -85,6 +85,15 @@ const UPDATE_NOTES_BY_VERSION = {
   "1.2.2": [
     "스티커 기능 추가",
     "창 닫기(X) 시 앱을 종료하지 않고 시스템 트레이로 이동",
+  ].map((item) => `• ${item}`).join("\n"),
+  "1.2.3": [
+    "스티커 기능 추가 및 회전·크기 조절 지원",
+    "마지막으로 조작한 스티커가 최상단에 표시되도록 개선",
+    "창 닫기(X) 시 앱을 종료하지 않고 시스템 트레이로 이동",
+    "여러 기기 간 Google Drive 동기화 안정성 개선",
+    "모바일에서 PC 전용 이미지·스티커 데이터가 덮어써지는 문제 수정",
+    "목록에서 삭제한 투두가 되살아나는 문제 수정",
+    "모바일 Google Drive 연결 만료 안내 추가",
   ].map((item) => `• ${item}`).join("\n"),
 };
 
@@ -110,6 +119,14 @@ function clearDriveTokenInfo() {
     localStorage.removeItem(DRIVE_TOKEN_INFO_STORAGE_KEY);
     localStorage.removeItem(DRIVE_TOKEN_STORAGE_KEY);
   } catch {}
+}
+
+function isMobileWebRuntime() {
+  if (typeof window === "undefined") return false;
+  if (typeof window.__XL_GOOGLE_AUTH__ === "function") return false;
+  const standalone = window.matchMedia?.("(display-mode: standalone)")?.matches || Boolean((window.navigator as any)?.standalone);
+  const narrowScreen = window.matchMedia?.("(max-width: 900px)")?.matches || window.innerWidth <= 900;
+  return Boolean(standalone || narrowScreen);
 }
 const DEFAULT_UPDATE_INFO_URL = "https://raw.githubusercontent.com/tea90g/xl-calendar-update/main/latest.json";
 const pad = (n) => String(n).padStart(2, "0");
@@ -594,6 +611,8 @@ export default function App() {
     }
   });
   const [driveStatus, setDriveStatus] = useState("Google Drive 미연결");
+  const [mobileDriveReconnectOpen, setMobileDriveReconnectOpen] = useState(false);
+  const [mobileDriveReconnectDismissed, setMobileDriveReconnectDismissed] = useState(false);
   const [updateStatus, setUpdateStatus] = useState("업데이트 미확인");
   const [backupFiles, setBackupFiles] = useState([]);
   const [backupOpen, setBackupOpen] = useState(false);
@@ -608,6 +627,7 @@ export default function App() {
   const driveInitialSyncReadyRef = useRef(false);
   const driveInitialSyncInProgressRef = useRef(false);
   const driveLastRemoteModifiedRef = useRef("");
+  const driveSaveInProgressRef = useRef(false);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -672,6 +692,36 @@ export default function App() {
       }
     } catch {}
   }, []);
+
+  useEffect(() => {
+    if (!isMobileWebRuntime()) return;
+
+    const checkMobileDriveToken = () => {
+      if (mobileDriveReconnectDismissed) return;
+      if (!state.driveAutoSync || !String(state.driveClientId || "").trim()) return;
+
+      const info = readDriveTokenInfo();
+      const expiresAt = Number(info?.expires_at || 0);
+      const token = info?.access_token || localStorage.getItem(DRIVE_TOKEN_STORAGE_KEY);
+      const needsReconnect = !token || !expiresAt || Date.now() >= expiresAt - 5 * 60 * 1000;
+
+      if (needsReconnect) {
+        setMobileDriveReconnectOpen(true);
+        setDriveStatus("Google Drive 연결 갱신 필요");
+      }
+    };
+
+    checkMobileDriveToken();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") checkMobileDriveToken();
+    };
+    window.addEventListener("focus", checkMobileDriveToken);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", checkMobileDriveToken);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [state.driveAutoSync, state.driveClientId, mobileDriveReconnectDismissed]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1002,6 +1052,8 @@ export default function App() {
           saveDriveTokenInfo(tokenInfo);
           setDriveToken(tokenInfo.access_token);
           setDriveStatus(tokenInfo.refresh_token ? "Google Drive 자동 연결됨" : "Google Drive 연결됨");
+          setMobileDriveReconnectOpen(false);
+          setMobileDriveReconnectDismissed(false);
           return;
         }
 
@@ -1025,6 +1077,8 @@ export default function App() {
             saveDriveTokenInfo(tokenInfo);
             setDriveToken(tokenInfo.access_token);
             setDriveStatus("Google Drive 연결됨");
+            setMobileDriveReconnectOpen(false);
+            setMobileDriveReconnectDismissed(false);
           } else {
             setDriveStatus("Google Drive 연결 실패");
           }
@@ -1085,6 +1139,13 @@ export default function App() {
     });
 
     if (res.status === 401) {
+      if (isMobileWebRuntime()) {
+        setMobileDriveReconnectOpen(true);
+        setMobileDriveReconnectDismissed(false);
+        setDriveStatus("Google Drive 연결 갱신 필요");
+        throw new Error("Google Drive 연결을 갱신해 주세요.");
+      }
+
       const refreshedToken = await refreshGoogleDriveTokenIfNeeded({ force: true });
       if (refreshedToken) {
         res = await fetch(`https://www.googleapis.com/drive/v3${path}`, {
@@ -1110,14 +1171,51 @@ export default function App() {
     return file || null;
   }
 
+  async function readDriveStateForMerge(file) {
+    if (!file?.id) return null;
+    const res = await driveRequest(`/files/${file.id}?alt=media`);
+    const data = await res.json();
+    return data?.state || data || null;
+  }
+
+  function preserveDesktopOnlyState(localState, remoteState) {
+    if (!remoteState || typeof remoteState !== "object") return localState;
+    return {
+      ...localState,
+      image: remoteState.image ?? localState.image,
+      anniversaries: Array.isArray(remoteState.anniversaries) ? remoteState.anniversaries : localState.anniversaries,
+      showAnniversaryPanel: remoteState.showAnniversaryPanel ?? localState.showAnniversaryPanel,
+      timerImages: remoteState.timerImages ?? localState.timerImages,
+      selectedImageSlot: remoteState.selectedImageSlot ?? localState.selectedImageSlot,
+      fixedImageMode: remoteState.fixedImageMode ?? localState.fixedImageMode,
+      showFixedList: remoteState.showFixedList ?? localState.showFixedList,
+      showTodayList: remoteState.showTodayList ?? localState.showTodayList,
+      showTimerBar: remoteState.showTimerBar ?? localState.showTimerBar,
+      trackedPrograms: Array.isArray(remoteState.trackedPrograms) ? remoteState.trackedPrograms : localState.trackedPrograms,
+      autoLaunchOnStartup: remoteState.autoLaunchOnStartup ?? localState.autoLaunchOnStartup,
+      stickers: Array.isArray(remoteState.stickers) ? remoteState.stickers : localState.stickers,
+    };
+  }
+
   async function saveToGoogleDrive(nextState = state) {
+    if (driveSaveInProgressRef.current) return;
+    driveSaveInProgressRef.current = true;
+
     try {
       setDriveStatus("Google Drive 저장 중...");
       const file = await findDriveFile();
+      let stateToSave = nextState;
+
+      if (isMobileWebRuntime() && file?.id) {
+        const remoteState = await readDriveStateForMerge(file);
+        if (!remoteState) throw new Error("기존 Drive 데이터를 확인하지 못해 모바일 저장을 중단했어요.");
+        stateToSave = preserveDesktopOnlyState(nextState, remoteState);
+      }
+
       const metadata = file
         ? { name: DRIVE_FILE_NAME }
         : { name: DRIVE_FILE_NAME, parents: ["appDataFolder"] };
-      const payload = new Blob([JSON.stringify(makeSyncSnapshot(nextState), null, 2)], { type: "application/json" });
+      const payload = new Blob([JSON.stringify(makeSyncSnapshot(stateToSave), null, 2)], { type: "application/json" });
       const form = new FormData();
       form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
       form.append("file", payload);
@@ -1130,6 +1228,13 @@ export default function App() {
       let res = await fetch(url, { method, headers: { Authorization: `Bearer ${token}` }, body: form });
 
       if (res.status === 401) {
+        if (isMobileWebRuntime()) {
+          setMobileDriveReconnectOpen(true);
+          setMobileDriveReconnectDismissed(false);
+          setDriveStatus("Google Drive 연결 갱신 필요");
+          throw new Error("Google Drive 연결을 갱신해 주세요.");
+        }
+
         const refreshedToken = await refreshGoogleDriveTokenIfNeeded({ force: true });
         if (refreshedToken) {
           res = await fetch(url, { method, headers: { Authorization: `Bearer ${refreshedToken}` }, body: form });
@@ -1150,6 +1255,8 @@ export default function App() {
       const message = err?.message ? String(err.message) : "알 수 없는 오류";
       console.error("[XL Calendar] Google Drive save failed", err);
       setDriveStatus(`Google Drive 저장 실패: ${message.slice(0, 160)}`);
+    } finally {
+      driveSaveInProgressRef.current = false;
     }
   }
 
@@ -2476,6 +2583,19 @@ ${info.message}` : "";
       </div>
 
       {selectedDate && <EventModal selectedDate={selectedDate} editingEvent={editingEvent} draft={draft} setDraft={setDraft} state={state} target={allEvents.find((e) => e.id === editingEvent)} onClose={() => { setSelectedDate(null); setEditingEvent(null); }} onSave={saveEvent} onDelete={deleteEvent} onSaveGroup={saveGroup} onDeleteGroup={deleteGroup} />}
+      {mobileDriveReconnectOpen && (
+        <Modal size="w-[390px]">
+          <div className="px-5 py-5">
+            <div className="text-[9px] font-bold uppercase tracking-[0.18em] text-[#aaa]">Google Drive</div>
+            <div className="mt-2 text-[19px] font-black tracking-[-0.04em] text-[#333]">연결을 갱신해 주세요</div>
+            <div className="mt-3 whitespace-pre-line text-[12px] leading-6 text-[#777]">모바일 Google Drive 연결 시간이 만료되었거나 곧 만료돼요.{"\n"}동기화를 계속하려면 다시 연결해 주세요.</div>
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => { setMobileDriveReconnectOpen(false); setMobileDriveReconnectDismissed(true); }} className="rounded-[10px] border bg-white px-3 py-3 text-[12px] font-bold text-[#888]">나중에</button>
+              <button type="button" onClick={() => { setMobileDriveReconnectDismissed(false); connectGoogleDrive(); }} className="rounded-[10px] border border-[#b8cae2] bg-[#dfeaf7] px-3 py-3 text-[12px] font-black text-[#556f8f]">지금 연결</button>
+            </div>
+          </div>
+        </Modal>
+      )}
       {updateNotice && (
         <Modal size="w-[460px]">
           <div className="border-b border-dashed border-[#e8e8e8] px-5 py-4">
