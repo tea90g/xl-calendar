@@ -400,8 +400,9 @@ function normalizeDriveLoadedState(loaded, fallback) {
 
   return {
     ...fallback,
-    year: safeNumber(loaded.year, fallback.year),
-    month: Math.max(1, Math.min(12, safeNumber(loaded.month, fallback.month))),
+    // 현재 보고 있는 연/월은 기기별 화면 상태이므로 Drive 데이터로 덮어쓰지 않는다.
+    year: fallback.year,
+    month: fallback.month,
     events,
     todos: cleanedTodos,
     deletedTodoIds: mergedDeletedTodoIds,
@@ -1172,17 +1173,21 @@ export default function App() {
     event.currentTarget.releasePointerCapture?.(event.pointerId);
   }
 
-  const makeSyncSnapshot = (source = state) => ({
-    version: 1,
-    savedAt: new Date().toISOString(),
-    state: {
-      ...source,
-      workSeconds: 0,
-      otherSeconds: 0,
-      awaySeconds: 0,
-      driveLastSyncedAt: source.driveLastSyncedAt || "",
-    },
-  });
+  const makeSyncSnapshot = (source = state) => {
+    // year/month는 각 기기에서 현재 보고 있는 화면 위치이므로 동기화 대상에서 제외한다.
+    const { year: _localYear, month: _localMonth, ...syncState } = source;
+    return {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      state: {
+        ...syncState,
+        workSeconds: 0,
+        otherSeconds: 0,
+        awaySeconds: 0,
+        driveLastSyncedAt: source.driveLastSyncedAt || "",
+      },
+    };
+  };
 
   const ensureScript = (src) => new Promise((resolve, reject) => {
     if (document.querySelector(`script[src="${src}"]`)) return resolve();
@@ -1483,10 +1488,8 @@ export default function App() {
     showTodayList: state.showTodayList,
     showTimerBar: state.showTimerBar,
     filterCategoryId: state.filterCategoryId,
-    year: state.year,
-    month: state.month,
     stickers: state.stickers,
-  }), [state.events, state.todos, state.deletedTodoIds, state.routineDoneByMonth, state.categories, state.image, state.anniversaries, state.showAnniversaryPanel, state.timerImages, state.selectedImageSlot, state.fixedImageMode, state.showJapanHolidays, state.showFixedList, state.showTodayList, state.showTimerBar, state.filterCategoryId, state.year, state.month, state.displayOrderOverrides, state.stickers]);
+  }), [state.events, state.todos, state.deletedTodoIds, state.routineDoneByMonth, state.categories, state.image, state.anniversaries, state.showAnniversaryPanel, state.timerImages, state.selectedImageSlot, state.fixedImageMode, state.showJapanHolidays, state.showFixedList, state.showTodayList, state.showTimerBar, state.filterCategoryId, state.displayOrderOverrides, state.stickers]);
 
   useEffect(() => {
     if (!state.driveAutoSync || !driveToken) return;
