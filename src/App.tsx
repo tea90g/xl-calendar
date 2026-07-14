@@ -306,6 +306,137 @@ function filterDeletedTodos(todos = [], deletedTodoIds = {}) {
   return (Array.isArray(todos) ? todos : []).filter((todo) => !deletedTodoIds?.[todo?.id]);
 }
 
+
+function normalizeDriveLoadedState(loaded, fallback) {
+  const safeObject = (value, fallbackValue = {}) => (
+    value && typeof value === "object" && !Array.isArray(value) ? value : fallbackValue
+  );
+  const safeString = (value, fallbackValue = "") => (
+    typeof value === "string" ? value : fallbackValue
+  );
+  const safeBoolean = (value, fallbackValue = false) => (
+    typeof value === "boolean" ? value : fallbackValue
+  );
+  const safeNumber = (value, fallbackValue = 0) => (
+    Number.isFinite(Number(value)) ? Number(value) : fallbackValue
+  );
+
+  const events = (Array.isArray(loaded.events) ? loaded.events : fallback.events)
+    .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+    .map((item, index) => ({
+      ...item,
+      id: safeString(item.id, uid()),
+      date: safeString(item.date, ""),
+      title: safeString(item.title, ""),
+      startTime: safeString(item.startTime, ""),
+      categoryId: safeString(item.categoryId, "etc"),
+      memo: safeString(item.memo, ""),
+      url: safeString(item.url, ""),
+      repeatRule: safeString(item.repeatRule, "none"),
+      sortOrder: safeNumber(item.sortOrder, index),
+    }))
+    .filter((item) => item.date && item.title);
+
+  const categories = (Array.isArray(loaded.categories) ? loaded.categories : fallback.categories)
+    .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+    .map((item, index) => ({
+      ...item,
+      id: safeString(item.id, `category-${index}`),
+      label: safeString(item.label, "기타"),
+      color: safeString(item.color, COLOR_POOL[index % COLOR_POOL.length]),
+      dot: safeString(item.dot, safeString(item.color, COLOR_POOL[index % COLOR_POOL.length])),
+    }));
+
+  const anniversaries = (Array.isArray(loaded.anniversaries) ? loaded.anniversaries : fallback.anniversaries)
+    .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+    .map((item) => ({
+      ...item,
+      id: safeString(item.id, uid()),
+      title: safeString(item.title, ""),
+      date: safeString(item.date, ""),
+      colorId: safeString(item.colorId, "cream"),
+      customColor: safeString(item.customColor, ""),
+    }))
+    .filter((item) => item.title && item.date);
+
+  const stickers = (Array.isArray(loaded.stickers) ? loaded.stickers : fallback.stickers)
+    .filter((item) => item && typeof item === "object" && !Array.isArray(item) && typeof item.src === "string")
+    .map((item, index) => ({
+      ...item,
+      id: safeString(item.id, `sticker-${uid()}`),
+      name: safeString(item.name, "sticker"),
+      xRatio: safeNumber(item.xRatio, 0.5),
+      yRatio: safeNumber(item.yRatio, 0.5),
+      width: Math.max(24, safeNumber(item.width, 120)),
+      height: Math.max(24, safeNumber(item.height, 120)),
+      rotation: safeNumber(item.rotation, 0),
+      zIndex: safeNumber(item.zIndex, index + 1),
+    }));
+
+  const todosSource = (Array.isArray(loaded.todos) ? loaded.todos : fallback.todos)
+    .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+    .map((item, index) => ({
+      ...item,
+      id: safeString(item.id, uid()),
+      text: safeString(item.text, ""),
+      fixed: Boolean(item.fixed),
+      done: Boolean(item.done),
+      day: item.fixed ? Math.max(1, Math.min(31, safeNumber(item.day, 1))) : undefined,
+      sortOrder: safeNumber(item.sortOrder, index),
+    }))
+    .filter((item) => item.text);
+
+  const mergedDeletedTodoIds = mergeDeletedTodoIds(
+    fallback.deletedTodoIds,
+    safeObject(loaded.deletedTodoIds, {})
+  );
+
+  const cleanedTodos = filterDeletedTodos(
+    cleanupDoneTemporaryTodos(todosSource),
+    mergedDeletedTodoIds
+  );
+
+  const loadedTimerImages = safeObject(loaded.timerImages, fallback.timerImages);
+
+  return {
+    ...fallback,
+    year: safeNumber(loaded.year, fallback.year),
+    month: Math.max(1, Math.min(12, safeNumber(loaded.month, fallback.month))),
+    events,
+    todos: cleanedTodos,
+    deletedTodoIds: mergedDeletedTodoIds,
+    categories: categories.length ? categories : fallback.categories,
+    image: typeof loaded.image === "string" || loaded.image === null ? loaded.image : fallback.image,
+    anniversaries,
+    showAnniversaryPanel: safeBoolean(loaded.showAnniversaryPanel, fallback.showAnniversaryPanel),
+    timerImages: {
+      work: safeString(loadedTimerImages.work, safeString(fallback.timerImages?.work, "")),
+      other: safeString(loadedTimerImages.other, safeString(fallback.timerImages?.other, "")),
+      away: safeString(loadedTimerImages.away, safeString(fallback.timerImages?.away, "")),
+    },
+    selectedImageSlot: ["work", "other", "away"].includes(loaded.selectedImageSlot)
+      ? loaded.selectedImageSlot
+      : fallback.selectedImageSlot,
+    fixedImageMode: safeBoolean(loaded.fixedImageMode, fallback.fixedImageMode),
+    showJapanHolidays: safeBoolean(loaded.showJapanHolidays, fallback.showJapanHolidays),
+    showFixedList: safeBoolean(loaded.showFixedList, fallback.showFixedList),
+    showTodayList: safeBoolean(loaded.showTodayList, fallback.showTodayList),
+    showTimerBar: safeBoolean(loaded.showTimerBar, fallback.showTimerBar),
+    searchText: safeString(loaded.searchText, fallback.searchText),
+    filterCategoryId: safeString(loaded.filterCategoryId, fallback.filterCategoryId),
+    trackedPrograms: (Array.isArray(loaded.trackedPrograms) ? loaded.trackedPrograms : fallback.trackedPrograms)
+      .filter((item) => typeof item === "string"),
+    driveLastSyncedAt: safeString(loaded.driveLastSyncedAt, fallback.driveLastSyncedAt),
+    updateLastCheckedAt: safeString(loaded.updateLastCheckedAt, fallback.updateLastCheckedAt),
+    updateDismissedVersion: safeString(loaded.updateDismissedVersion, fallback.updateDismissedVersion),
+    updateInfoUrl: safeString(loaded.updateInfoUrl, fallback.updateInfoUrl || DEFAULT_UPDATE_INFO_URL),
+    autoLaunchOnStartup: safeBoolean(loaded.autoLaunchOnStartup, fallback.autoLaunchOnStartup),
+    routineDoneByMonth: safeObject(loaded.routineDoneByMonth, fallback.routineDoneByMonth),
+    displayOrderOverrides: safeObject(loaded.displayOrderOverrides, fallback.displayOrderOverrides),
+    stickers,
+  };
+}
+
 function getElectronStateApi() {
   if (typeof window === "undefined") return null;
   return window.electron || window.__XL_STATE__ || null;
@@ -1280,39 +1411,9 @@ export default function App() {
 
       setState((s) => {
         const fallback = { ...starterState(), ...s };
-        const mergedDeletedTodoIds = mergeDeletedTodoIds(
-          fallback.deletedTodoIds,
-          loaded.deletedTodoIds
-        );
-        const loadedTodos = Array.isArray(loaded.todos) ? loaded.todos : fallback.todos;
-        const cleanedTodos = filterDeletedTodos(
-          cleanupDoneTemporaryTodos(loadedTodos),
-          mergedDeletedTodoIds
-        );
-
+        const normalized = normalizeDriveLoadedState(loaded, fallback);
         return {
-          ...fallback,
-          ...loaded,
-          year: Number.isFinite(Number(loaded.year)) ? Number(loaded.year) : fallback.year,
-          month: Number.isFinite(Number(loaded.month)) && Number(loaded.month) >= 1 && Number(loaded.month) <= 12
-            ? Number(loaded.month)
-            : fallback.month,
-          events: Array.isArray(loaded.events) ? loaded.events : fallback.events,
-          todos: cleanedTodos,
-          deletedTodoIds: mergedDeletedTodoIds,
-          categories: Array.isArray(loaded.categories) ? loaded.categories : fallback.categories,
-          anniversaries: Array.isArray(loaded.anniversaries) ? loaded.anniversaries : fallback.anniversaries,
-          stickers: Array.isArray(loaded.stickers) ? loaded.stickers : fallback.stickers,
-          trackedPrograms: Array.isArray(loaded.trackedPrograms) ? loaded.trackedPrograms : fallback.trackedPrograms,
-          routineDoneByMonth: loaded.routineDoneByMonth && typeof loaded.routineDoneByMonth === "object" && !Array.isArray(loaded.routineDoneByMonth)
-            ? loaded.routineDoneByMonth
-            : fallback.routineDoneByMonth,
-          displayOrderOverrides: loaded.displayOrderOverrides && typeof loaded.displayOrderOverrides === "object" && !Array.isArray(loaded.displayOrderOverrides)
-            ? loaded.displayOrderOverrides
-            : fallback.displayOrderOverrides,
-          timerImages: loaded.timerImages && typeof loaded.timerImages === "object" && !Array.isArray(loaded.timerImages)
-            ? loaded.timerImages
-            : fallback.timerImages,
+          ...normalized,
           driveClientId: fallback.driveClientId,
           driveClientSecret: fallback.driveClientSecret,
           driveAutoSync: fallback.driveAutoSync,
