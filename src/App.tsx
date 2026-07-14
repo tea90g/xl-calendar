@@ -706,7 +706,7 @@ function ModalHead({ title, sub, onClose }) {
   return <div className="flex items-center justify-between border-b border-dashed border-[#e8e8e8] px-5 py-4"><div><div className="text-[8px] uppercase tracking-[0.22em] text-neutral-300">{sub}</div><div className="mt-1 text-[20px] font-black tracking-[-0.04em] text-[#333]">{title}</div></div><button onClick={onClose} className="rounded-full border border-[#e5e5e5] bg-white px-3 py-1 text-[11px] text-neutral-400">닫기</button></div>;
 }
 
-export default function App() {
+function CalendarApp() {
   const [state, setState] = useState(readState);
   const [selectedDate, setSelectedDate] = useState(null);
   const [editingEvent, setEditingEvent] = useState(null);
@@ -3897,4 +3897,56 @@ function ImageModal({ state, setState, imageRef, onClose }) {
   };
 
   return <Modal size="w-[320px]"><ModalHead sub="image" onClose={onClose} /><div className="space-y-3 p-5"><div className="grid grid-cols-4 gap-2"><button onClick={() => setState((s) => ({ ...s, fixedImageMode: !s.fixedImageMode }))} className={cx("rounded-[10px] border px-2 py-2 text-[8px]", state.fixedImageMode && "bg-[#efe5c8]")}>{state.fixedImageMode ? "고정 ON" : "고정 OFF"}</button>{["work", "other", "away"].map((slot) => <button key={slot} onClick={() => setState((s) => ({ ...s, selectedImageSlot: slot }))} className={cx("rounded-[10px] border px-2 py-2 text-[11px]", state.selectedImageSlot === slot && "bg-[#dce7f3]")}>{slot === "work" ? "작업" : slot === "other" ? "그 외" : "자리"}</button>)}</div><div className="grid min-h-[120px] place-items-start overflow-visible rounded-[12px] bg-transparent">{hasAnyImage ? <img src={state.timerImages?.[currentSlot] || state.image} alt="preview" className="block h-auto w-full rounded-[12px] object-contain" /> : <span className="text-[12px] text-[#aaa]">이미지 없음</span>}</div><button onClick={() => imageRef.current?.click()} className="w-full rounded-[12px] border bg-white py-3 text-[13px] font-bold">이미지 변경</button><div className="grid grid-cols-2 gap-2"><button onClick={clearCurrentImage} disabled={!hasSlotImage && !state.image} className="rounded-[12px] border border-[#f0d7dc] bg-[#fff9fa] py-3 text-[12px] font-black text-[#c88a96] disabled:opacity-35">현재 이미지 삭제</button><button onClick={clearAllImages} disabled={!hasAnyImage} className="rounded-[12px] border border-[#e7e7e7] bg-white py-3 text-[12px] font-bold text-[#999] disabled:opacity-35">전체 이미지 삭제</button></div></div></Modal>;
+}
+
+
+class XLCalendarErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null; info: string }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { error: null, info: "" };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error, info: "" };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    const detail = `${error?.name || "Error"}: ${error?.message || String(error)}\n\n${errorInfo?.componentStack || ""}`;
+    try {
+      localStorage.setItem("xl-calendar-last-render-error", detail);
+    } catch {}
+    this.setState({ info: errorInfo?.componentStack || "" });
+    console.error("[XL Calendar] render error", error, errorInfo);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    const error = this.state.error;
+    const detail = `${error?.name || "Error"}: ${error?.message || String(error)}${this.state.info ? `\n\n${this.state.info}` : ""}`;
+    return (
+      <div className="min-h-screen bg-[#fffdf8] p-5 text-[#333]">
+        <div className="mx-auto mt-10 max-w-[680px] rounded-[16px] border border-[#efcfd5] bg-white p-5 shadow-[0_16px_50px_rgba(0,0,0,0.10)]">
+          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-[#d07f91]">XL Calendar 진단 화면</div>
+          <h1 className="mt-2 text-[20px] font-black">데이터 적용 후 화면 오류가 발생했어요.</h1>
+          <p className="mt-2 text-[13px] leading-6 text-[#666]">아래 오류 내용을 캡처해서 보내 주세요. 현재 화면은 오류 확인용이며, 데이터 자체를 삭제하지 않습니다.</p>
+          <pre className="mt-4 max-h-[55vh] overflow-auto whitespace-pre-wrap break-words rounded-[12px] bg-[#f7f7f7] p-4 text-[12px] leading-5 text-[#a33]">{detail}</pre>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button onClick={() => window.location.reload()} className="rounded-[12px] border bg-white py-3 text-[13px] font-bold">다시 열기</button>
+            <button onClick={() => navigator.clipboard?.writeText(detail)} className="rounded-[12px] bg-[#222] py-3 text-[13px] font-black text-white">오류 복사</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
+
+export default function App() {
+  return (
+    <XLCalendarErrorBoundary>
+      <CalendarApp />
+    </XLCalendarErrorBoundary>
+  );
 }
