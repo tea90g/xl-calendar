@@ -1270,29 +1270,60 @@ export default function App() {
       }
       const res = await driveRequest(`/files/${file.id}?alt=media`);
       const data = await res.json();
-      const loaded = data.state || data;
+      const loaded = data?.state || data;
+      if (!loaded || typeof loaded !== "object" || Array.isArray(loaded)) {
+        throw new Error("Drive 데이터 형식이 올바르지 않아요.");
+      }
+
       const syncedAt = file.modifiedTime || new Date().toISOString();
       driveLastRemoteModifiedRef.current = syncedAt;
+
       setState((s) => {
-        const mergedDeletedTodoIds = mergeDeletedTodoIds(s.deletedTodoIds, loaded?.deletedTodoIds);
+        const fallback = { ...starterState(), ...s };
+        const mergedDeletedTodoIds = mergeDeletedTodoIds(
+          fallback.deletedTodoIds,
+          loaded.deletedTodoIds
+        );
+        const loadedTodos = Array.isArray(loaded.todos) ? loaded.todos : fallback.todos;
         const cleanedTodos = filterDeletedTodos(
-          cleanupDoneTemporaryTodos(loaded?.todos),
+          cleanupDoneTemporaryTodos(loadedTodos),
           mergedDeletedTodoIds
         );
+
         return {
-          ...starterState(),
-          ...s,
+          ...fallback,
           ...loaded,
+          year: Number.isFinite(Number(loaded.year)) ? Number(loaded.year) : fallback.year,
+          month: Number.isFinite(Number(loaded.month)) && Number(loaded.month) >= 1 && Number(loaded.month) <= 12
+            ? Number(loaded.month)
+            : fallback.month,
+          events: Array.isArray(loaded.events) ? loaded.events : fallback.events,
           todos: cleanedTodos,
           deletedTodoIds: mergedDeletedTodoIds,
-          driveClientId: s.driveClientId,
-          driveClientSecret: s.driveClientSecret,
+          categories: Array.isArray(loaded.categories) ? loaded.categories : fallback.categories,
+          anniversaries: Array.isArray(loaded.anniversaries) ? loaded.anniversaries : fallback.anniversaries,
+          stickers: Array.isArray(loaded.stickers) ? loaded.stickers : fallback.stickers,
+          trackedPrograms: Array.isArray(loaded.trackedPrograms) ? loaded.trackedPrograms : fallback.trackedPrograms,
+          routineDoneByMonth: loaded.routineDoneByMonth && typeof loaded.routineDoneByMonth === "object" && !Array.isArray(loaded.routineDoneByMonth)
+            ? loaded.routineDoneByMonth
+            : fallback.routineDoneByMonth,
+          displayOrderOverrides: loaded.displayOrderOverrides && typeof loaded.displayOrderOverrides === "object" && !Array.isArray(loaded.displayOrderOverrides)
+            ? loaded.displayOrderOverrides
+            : fallback.displayOrderOverrides,
+          timerImages: loaded.timerImages && typeof loaded.timerImages === "object" && !Array.isArray(loaded.timerImages)
+            ? loaded.timerImages
+            : fallback.timerImages,
+          driveClientId: fallback.driveClientId,
+          driveClientSecret: fallback.driveClientSecret,
+          driveAutoSync: fallback.driveAutoSync,
           driveLastSyncedAt: syncedAt,
         };
       });
       setDriveStatus("Google Drive 불러오기 완료");
-    } catch {
-      setDriveStatus("Google Drive 불러오기 실패");
+    } catch (err) {
+      const message = err?.message ? String(err.message) : "알 수 없는 오류";
+      console.error("[XL Calendar] Google Drive load failed", err);
+      setDriveStatus(`Google Drive 불러오기 실패: ${message.slice(0, 140)}`);
     }
   }
 
