@@ -796,6 +796,7 @@ export default function App() {
   const driveInitialSyncReadyRef = useRef(false);
   const driveInitialSyncInProgressRef = useRef(false);
   const driveLastRemoteModifiedRef = useRef("");
+  const driveLastSyncedPayloadRef = useRef("");
   const driveSaveInProgressRef = useRef(false);
 
   useEffect(() => {
@@ -1173,6 +1174,27 @@ export default function App() {
     event.currentTarget.releasePointerCapture?.(event.pointerId);
   }
 
+  const makeSyncPayload = (source = state) => JSON.stringify({
+    events: source.events,
+    displayOrderOverrides: source.displayOrderOverrides,
+    todos: source.todos,
+    deletedTodoIds: source.deletedTodoIds,
+    routineDoneByMonth: source.routineDoneByMonth,
+    categories: source.categories,
+    image: source.image,
+    anniversaries: source.anniversaries,
+    showAnniversaryPanel: source.showAnniversaryPanel,
+    timerImages: source.timerImages,
+    selectedImageSlot: source.selectedImageSlot,
+    fixedImageMode: source.fixedImageMode,
+    showJapanHolidays: source.showJapanHolidays,
+    showFixedList: source.showFixedList,
+    showTodayList: source.showTodayList,
+    showTimerBar: source.showTimerBar,
+    filterCategoryId: source.filterCategoryId,
+    stickers: source.stickers,
+  });
+
   const makeSyncSnapshot = (source = state) => {
     // year/month는 각 기기에서 현재 보고 있는 화면 위치이므로 동기화 대상에서 제외한다.
     const { year: _localYear, month: _localMonth, ...syncState } = source;
@@ -1370,7 +1392,9 @@ export default function App() {
     };
   }
 
-  async function saveToGoogleDrive(nextState = state) {
+  async function saveToGoogleDrive(nextState = state, { force = true } = {}) {
+    const nextPayload = makeSyncPayload(nextState);
+    if (!force && nextPayload === driveLastSyncedPayloadRef.current) return;
     if (driveSaveInProgressRef.current) return;
     driveSaveInProgressRef.current = true;
 
@@ -1422,6 +1446,7 @@ export default function App() {
       } catch {}
 
       driveLastRemoteModifiedRef.current = now;
+      driveLastSyncedPayloadRef.current = makeSyncPayload(stateToSave);
       setState((s) => ({ ...s, driveLastSyncedAt: now }));
       setDriveStatus("Google Drive 저장 완료");
     } catch (err) {
@@ -1454,54 +1479,43 @@ export default function App() {
       setState((s) => {
         const fallback = { ...starterState(), ...s };
         const normalized = normalizeDriveLoadedState(loaded, fallback);
-        return {
+        const nextState = {
           ...normalized,
           driveClientId: fallback.driveClientId,
           driveClientSecret: fallback.driveClientSecret,
           driveAutoSync: fallback.driveAutoSync,
           driveLastSyncedAt: syncedAt,
         };
+        driveLastSyncedPayloadRef.current = makeSyncPayload(nextState);
+        return nextState;
       });
       setDriveStatus("Google Drive 불러오기 완료");
+      return true;
     } catch (err) {
       const message = err?.message ? String(err.message) : "알 수 없는 오류";
       console.error("[XL Calendar] Google Drive load failed", err);
       setDriveStatus(`Google Drive 불러오기 실패: ${message.slice(0, 140)}`);
+      return false;
     }
   }
 
-  const syncPayload = useMemo(() => JSON.stringify({
-    events: state.events,
-    displayOrderOverrides: state.displayOrderOverrides,
-    todos: state.todos,
-    deletedTodoIds: state.deletedTodoIds,
-    routineDoneByMonth: state.routineDoneByMonth,
-    categories: state.categories,
-    image: state.image,
-    anniversaries: state.anniversaries,
-    showAnniversaryPanel: state.showAnniversaryPanel,
-    timerImages: state.timerImages,
-    selectedImageSlot: state.selectedImageSlot,
-    fixedImageMode: state.fixedImageMode,
-    showJapanHolidays: state.showJapanHolidays,
-    showFixedList: state.showFixedList,
-    showTodayList: state.showTodayList,
-    showTimerBar: state.showTimerBar,
-    filterCategoryId: state.filterCategoryId,
-    stickers: state.stickers,
-  }), [state.events, state.todos, state.deletedTodoIds, state.routineDoneByMonth, state.categories, state.image, state.anniversaries, state.showAnniversaryPanel, state.timerImages, state.selectedImageSlot, state.fixedImageMode, state.showJapanHolidays, state.showFixedList, state.showTodayList, state.showTimerBar, state.filterCategoryId, state.displayOrderOverrides, state.stickers]);
+  const syncPayload = useMemo(() => makeSyncPayload(state), [state.events, state.todos, state.deletedTodoIds, state.routineDoneByMonth, state.categories, state.image, state.anniversaries, state.showAnniversaryPanel, state.timerImages, state.selectedImageSlot, state.fixedImageMode, state.showJapanHolidays, state.showFixedList, state.showTodayList, state.showTimerBar, state.filterCategoryId, state.displayOrderOverrides, state.stickers]);
 
   useEffect(() => {
     if (!state.driveAutoSync || !driveToken) return;
     if (!driveInitialSyncReadyRef.current) return;
 
-    const timer = setTimeout(() => saveToGoogleDrive(state), 2500);
+    if (syncPayload === driveLastSyncedPayloadRef.current) return;
+
+    const timer = setTimeout(() => saveToGoogleDrive(state, { force: false }), 2500);
     return () => clearTimeout(timer);
   }, [syncPayload, state.driveAutoSync, driveToken]);
 
 
   async function runInitialGoogleDriveSync() {
     if (!state.driveAutoSync || !driveToken || driveInitialSyncInProgressRef.current) return;
+
+    let initialSyncCompleted = false;
 
     try {
       driveInitialSyncInProgressRef.current = true;
@@ -1511,28 +1525,23 @@ export default function App() {
       const file = await getDriveFileMetadata();
 
       if (!file?.id || !file.modifiedTime) {
-        driveInitialSyncReadyRef.current = true;
+        driveLastSyncedPayloadRef.current = makeSyncPayload(state);
+        initialSyncCompleted = true;
         setDriveStatus("Google Drive에 저장된 데이터 없음");
         return;
       }
 
-      const remoteTime = new Date(file.modifiedTime).getTime();
-      const localTime = state.driveLastSyncedAt ? new Date(state.driveLastSyncedAt).getTime() : 0;
-      const knownRemoteTime = driveLastRemoteModifiedRef.current ? new Date(driveLastRemoteModifiedRef.current).getTime() : 0;
-      const baseline = Math.max(localTime || 0, knownRemoteTime || 0);
+      const loaded = await loadFromGoogleDrive();
+      if (!loaded) throw new Error("Google Drive 초기 데이터 불러오기에 실패했어요.");
 
-      if (!baseline || remoteTime > baseline + 1500) {
-        await loadFromGoogleDrive();
-        setDriveStatus("Google Drive 최신 데이터 불러오기 완료");
-      } else {
-        setDriveStatus("Google Drive 최신 상태 확인 완료");
-      }
+      initialSyncCompleted = true;
+      setDriveStatus("Google Drive 최신 데이터 불러오기 완료");
     } catch (err) {
       const message = err?.message ? String(err.message) : "알 수 없는 오류";
       console.error("[XL Calendar] Google Drive initial sync failed", err);
       setDriveStatus(`Google Drive 최신 데이터 확인 실패: ${message.slice(0, 120)}`);
     } finally {
-      driveInitialSyncReadyRef.current = true;
+      driveInitialSyncReadyRef.current = initialSyncCompleted;
       driveInitialSyncInProgressRef.current = false;
     }
   }
@@ -1566,10 +1575,12 @@ export default function App() {
   useEffect(() => {
     if (!state.driveAutoSync || !driveToken) {
       driveInitialSyncReadyRef.current = false;
+      driveLastSyncedPayloadRef.current = "";
       return;
     }
 
     driveInitialSyncReadyRef.current = false;
+    driveLastSyncedPayloadRef.current = "";
 
     const first = window.setTimeout(() => {
       runInitialGoogleDriveSync();
