@@ -71,12 +71,12 @@ function saveSessionTimers(state) {
 
 const DRIVE_FILE_NAME = "xl-calendar-data.json";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
-const APP_VERSION = "1.2.4";
+const APP_VERSION = "1.2.5";
 const DRIVE_TOKEN_STORAGE_KEY = "xl-google-drive-token";
 const DRIVE_TOKEN_INFO_STORAGE_KEY = "xl-google-drive-token-info";
 const STICKER_MAX_COUNT = 5;
 const STICKER_MAX_FILE_BYTES = 3 * 1024 * 1024;
-const UPDATE_NOTICE_STORAGE_KEY = "xl-calendar-last-seen-update-version-1.2.4-sticker5";
+const UPDATE_NOTICE_STORAGE_KEY = "xl-calendar-last-seen-update-version-1.2.5-anniversary-date-fix";
 const UPDATE_NOTES_BY_VERSION = {
   "1.2.1": [
     "스티커 기능 추가",
@@ -98,6 +98,9 @@ const UPDATE_NOTES_BY_VERSION = {
   "1.2.4": [
     "누락된 한국 공휴일 표기 추가",
     "스티커 최대 사용 개수를 3개에서 5개로 확대",
+  ].map((item) => `• ${item}`).join("\n"),
+  "1.2.5": [
+    "캘린더의 100일 단위 기념일 표기가 하루 늦게 나오는 문제 수정",
   ].map((item) => `• ${item}`).join("\n"),
 };
 
@@ -2639,7 +2642,8 @@ ${info.message}` : "";
 
       for (let n = 1; n <= 200; n += 1) {
         const dayCount = n * 100;
-        const key = addDays(info.targetKey, dayCount);
+        // 시작일을 1일째로 세므로, N일째는 시작일로부터 N - 1일 후이다.
+        const key = addDays(info.targetKey, dayCount - 1);
         if (key > endKey) break;
         if (key >= startKey) {
           pushAnniversaryMark(map, key, {
