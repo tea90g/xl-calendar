@@ -71,12 +71,12 @@ function saveSessionTimers(state) {
 
 const DRIVE_FILE_NAME = "xl-calendar-data.json";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
-const APP_VERSION = "1.2.5";
+const APP_VERSION = "1.2.6";
 const DRIVE_TOKEN_STORAGE_KEY = "xl-google-drive-token";
 const DRIVE_TOKEN_INFO_STORAGE_KEY = "xl-google-drive-token-info";
 const STICKER_MAX_COUNT = 5;
 const STICKER_MAX_FILE_BYTES = 3 * 1024 * 1024;
-const UPDATE_NOTICE_STORAGE_KEY = "xl-calendar-last-seen-update-version-1.2.5-anniversary-date-fix";
+const UPDATE_NOTICE_STORAGE_KEY = "xl-calendar-last-seen-update-version-1.2.6-navigation-and-today-start";
 const UPDATE_NOTES_BY_VERSION = {
   "1.2.1": [
     "스티커 기능 추가",
@@ -101,6 +101,10 @@ const UPDATE_NOTES_BY_VERSION = {
   ].map((item) => `• ${item}`).join("\n"),
   "1.2.5": [
     "캘린더의 100일 단위 기념일 표기가 하루 늦게 나오는 문제 수정",
+  ].map((item) => `• ${item}`).join("\n"),
+  "1.2.6": [
+    "연도 이동 버튼을 한 달 단위로 이동하도록 변경 (12월 → 다음 해 1월 / 1월 → 이전 해 12월)",
+    "앱을 종료한 뒤 다시 실행하면 저장된 마지막 페이지가 아닌 오늘 날짜의 달력으로 기동",
   ].map((item) => `• ${item}`).join("\n"),
 };
 
@@ -617,15 +621,17 @@ function saveStateToLocalStorage(source) {
 }
 
 function readState() {
+  const today = new Date();
+  const todayView = { year: today.getFullYear(), month: today.getMonth() + 1 };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const sessionTimers = loadSessionTimers();
-      return { ...starterState(), ...JSON.parse(raw), ...sessionTimers };
+      return { ...starterState(), ...JSON.parse(raw), ...sessionTimers, ...todayView };
     }
-    return starterState();
+    return { ...starterState(), ...todayView };
   } catch {
-    return starterState();
+    return { ...starterState(), ...todayView };
   }
 }
 
@@ -1043,10 +1049,13 @@ export default function App() {
 
         if (!cancelled && loadedState && typeof loadedState === "object") {
           const sessionTimers = loadSessionTimers();
+          const today = new Date();
           setState(() => ({
             ...starterState(),
             ...loadedState,
             ...sessionTimers,
+            year: today.getFullYear(),
+            month: today.getMonth() + 1,
           }));
         }
       } catch {
@@ -3753,7 +3762,13 @@ function Todo({ todo, routineMonthKey, routineDoneByMonth, onToggle, onEdit }) {
 
 function MonthTabs({ state, setState, jumpMonth }) {
   const tabBase = "flex h-[clamp(46px,6.1vh,75px)] w-[43px] items-center justify-center rounded-r-[7px] rounded-l-[4px] border border-[#dfe5e8] text-[11px] font-[600] tracking-[1.3px] text-[#727983] shadow-[0_3px_6px_rgba(0,0,0,0.085)] transition-all duration-150 ease-out [writing-mode:vertical-rl] hover:-translate-y-[1px] hover:translate-x-[2px] hover:shadow-[0_5px_9px_rgba(0,0,0,0.11)]";
-  return <div className="absolute right-[10px] top-[52px] z-20 flex w-[44px] flex-col items-end gap-[3px]"><YearTab label={`< ${state.year - 1}`} onClick={() => setState((s) => ({ ...s, year: s.year - 1 }))} />{["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"].map((m, i) => <button key={m} onClick={() => jumpMonth(i + 1)} className={cx(tabBase, state.month === i + 1 ? "w-[50px] translate-x-[4px] bg-[#FFE4E6] shadow-[0_6px_14px_rgba(0,0,0,0.12)]" : "bg-[#F5F5F5]")}>{m}</button>)}<YearTab label={`${state.year + 1} >`} onClick={() => setState((s) => ({ ...s, year: s.year + 1 }))} /></div>;
+  return <div className="absolute right-[10px] top-[52px] z-20 flex w-[44px] flex-col items-end gap-[3px]"><YearTab label={`< ${state.year - 1}`} onClick={() => setState((s) => {
+    const d = new Date(s.year, s.month - 2, 1);
+    return { ...s, year: d.getFullYear(), month: d.getMonth() + 1 };
+  })} />{["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"].map((m, i) => <button key={m} onClick={() => jumpMonth(i + 1)} className={cx(tabBase, state.month === i + 1 ? "w-[50px] translate-x-[4px] bg-[#FFE4E6] shadow-[0_6px_14px_rgba(0,0,0,0.12)]" : "bg-[#F5F5F5]")}>{m}</button>)}<YearTab label={`${state.year + 1} >`} onClick={() => setState((s) => {
+    const d = new Date(s.year, s.month, 1);
+    return { ...s, year: d.getFullYear(), month: d.getMonth() + 1 };
+  })} /></div>;
 }
 
 function YearTab({ label, onClick }) {
